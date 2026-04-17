@@ -88,7 +88,7 @@ Next up: CycloneDX and SPDX export to disk.
 
 - Go `1.26` or newer
 
-### Build and run
+### Build and run (macOS/Linux)
 
 ```bash
 make tidy
@@ -96,7 +96,7 @@ make build
 ./bin/sbomber
 ```
 
-### Run without building
+### Run without building (macOS/Linux)
 
 ```bash
 # Launch interactive mode (landing screen with menu)
@@ -107,6 +107,23 @@ make scan SCAN_PATH=/path/to/your/projects
 
 # Scan with a specific export format
 make scan SCAN_PATH=/path/to/repo SCAN_ARGS='--format both'
+```
+
+### Windows (PowerShell)
+
+```powershell
+# Download dependencies
+go mod tidy
+
+# Run directly (no build step)
+go run ./cmd/sbomber
+
+# Or build and run
+go build -o ./bin/sbomber.exe ./cmd/sbomber
+./bin/sbomber.exe
+
+# Scan a specific folder
+go run ./cmd/sbomber scan C:\path\to\your\projects
 ```
 
 ### Run tests
