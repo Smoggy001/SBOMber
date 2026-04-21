@@ -27,8 +27,8 @@ func TestParseRequirements(t *testing.T) {
 	}
 
 	expected := map[string]deps.Scope{
-		"flask":   deps.ScopeRuntime,
-		"pytest":  deps.ScopeDev,
+		"flask":    deps.ScopeRuntime,
+		"pytest":   deps.ScopeDev,
 		"requests": deps.ScopeRuntime,
 	}
 

@@ -16,11 +16,11 @@ const (
 )
 
 type cycloneDXBom struct {
-	XMLName xml.Name           `xml:"bom"`
-	Xmlns   string             `xml:"xmlns,attr"`
-	Version int                `xml:"version,attr"`
-	Metadata cycloneDXMetadata `xml:"metadata"`
-	Components *componentList  `xml:"components,omitempty"`
+	XMLName    xml.Name          `xml:"bom"`
+	Xmlns      string            `xml:"xmlns,attr"`
+	Version    int               `xml:"version,attr"`
+	Metadata   cycloneDXMetadata `xml:"metadata"`
+	Components *componentList    `xml:"components,omitempty"`
 }
 
 type cycloneDXMetadata struct {

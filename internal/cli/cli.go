@@ -403,7 +403,7 @@ func scanVulnerabilities(stdout io.Writer, stderr io.Writer, repoPath string) {
 	}
 
 	_, _ = fmt.Fprintf(stdout, "  vulnerabilities found: %d\n", vulnResults.TotalCount)
-	
+
 	counts := vulnResults.CountBySeverity()
 	for severity, count := range counts {
 		_, _ = fmt.Fprintf(stdout, "    - %s: %d\n", severity, count)
