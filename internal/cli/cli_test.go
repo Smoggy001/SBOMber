@@ -68,7 +68,7 @@ func TestScanReportsDetectedEcosystems(t *testing.T) {
 		"prettier",
 		"[npm]",
 		"direct dependencies (package.json): 2",
-		"transitive dependencies (yarn.lock): 2",
+		"transitive dependencies: 2",
 		"total known dependencies: 4",
 		"sample packages: react, vitest",
 	} {
@@ -101,7 +101,7 @@ func TestInteractiveScanCurrentFolder(t *testing.T) {
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 
-	exitCode := Main(nil, strings.NewReader("1\n\n"), &stdout, &stderr)
+	exitCode := Main(nil, strings.NewReader("1\n\nN\n"), &stdout, &stderr)
 	if exitCode != 0 {
 		t.Fatalf("expected exit code 0, got %d, stderr=%q", exitCode, stderr.String())
 	}
