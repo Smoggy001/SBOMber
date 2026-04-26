@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/Xsamsx/SBOMber/internal/deps"
 )
@@ -24,6 +25,7 @@ type cycloneDXBom struct {
 }
 
 type cycloneDXMetadata struct {
+	Timestamp string             `xml:"timestamp"`
 	Component cycloneDXComponent `xml:"component"`
 }
 
@@ -36,6 +38,7 @@ type cycloneDXComponent struct {
 	Name    string `xml:"name"`
 	Version string `xml:"version,omitempty"`
 	Scope   string `xml:"scope,omitempty"`
+	Purl    string `xml:"purl,omitempty"`
 }
 
 // SaveSBOM writes one or more SBOM files for the repository.
@@ -69,6 +72,7 @@ func saveCycloneDX(repoDir, repoName string, summary deps.Summary) (string, erro
 		Xmlns:   "http://cyclonedx.org/schema/bom/1.5",
 		Version: 1,
 		Metadata: cycloneDXMetadata{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			Component: cycloneDXComponent{
 				Type: "application",
 				Name: repoName,
@@ -83,6 +87,7 @@ func saveCycloneDX(repoDir, repoName string, summary deps.Summary) (string, erro
 			Name:    dependency.Name,
 			Version: dependency.Version,
 			Scope:   string(dependency.Scope),
+			Purl:    buildPurl(dependency.Name, dependency.Version, "npm"),
 		})
 	}
 	for _, dependency := range summary.Transitive {
@@ -91,6 +96,7 @@ func saveCycloneDX(repoDir, repoName string, summary deps.Summary) (string, erro
 			Name:    dependency.Name,
 			Version: dependency.Version,
 			Scope:   "transitive",
+			Purl:    buildPurl(dependency.Name, dependency.Version, "npm"),
 		})
 	}
 
@@ -123,7 +129,7 @@ func saveSPDX(repoDir, repoName string, summary deps.Summary) (string, error) {
 		fmt.Sprintf("DocumentName: %s", repoName),
 		fmt.Sprintf("DocumentNamespace: %s", namespace),
 		"Creator: Tool: SBOMber",
-		fmt.Sprintf("Created: %s", "2026-01-01T00:00:00Z"),
+		fmt.Sprintf("Created: %s", time.Now().UTC().Format(time.RFC3339)),
 	}
 
 	packageIndex := 1
@@ -172,4 +178,16 @@ func saveSPDX(repoDir, repoName string, summary deps.Summary) (string, error) {
 	}
 
 	return path, nil
+}
+
+// buildPurl constructs a Package URL (purl) for a dependency.
+// The purl format is: pkg:<type>/<name>@<version>
+func buildPurl(name, version, purlType string) string {
+	if name == "" {
+		return ""
+	}
+	if version == "" {
+		return fmt.Sprintf("pkg:%s/%s", purlType, name)
+	}
+	return fmt.Sprintf("pkg:%s/%s@%s", purlType, name, version)
 }
