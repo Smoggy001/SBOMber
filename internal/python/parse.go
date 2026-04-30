@@ -19,15 +19,16 @@ func ParseRequirements(root string) (deps.Summary, error) {
 
 	parseFile := func(filename string, scope deps.Scope) error {
 		path := filepath.Join(root, filename)
-		content, err := os.ReadFile(path)
+		f, err := os.Open(path)
 		if err != nil {
 			if os.IsNotExist(err) {
 				return nil
 			}
 			return err
 		}
+		defer f.Close()
 
-		scanner := bufio.NewScanner(strings.NewReader(string(content)))
+		scanner := bufio.NewScanner(f)
 		for scanner.Scan() {
 			line := strings.TrimSpace(scanner.Text())
 			if line == "" || strings.HasPrefix(line, "#") {
