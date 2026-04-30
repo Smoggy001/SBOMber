@@ -91,6 +91,7 @@ func ParseGemfileLock(root string) (deps.Summary, error) {
 			Name:    name,
 			Version: version,
 			Scope:   deps.ScopeRuntime,
+                        Ecosystem: "gem",
 		})
 	}
 

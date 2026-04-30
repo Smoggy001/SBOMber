@@ -69,6 +69,7 @@ func EnrichFromYarnLock(root string, summary deps.Summary) (deps.Summary, error)
 			Name:    entry.Name,
 			Version: entry.Version,
 			Scope:   deps.Scope("transitive"),
+                        Ecosystem: "npm",
 		}
 	}
 

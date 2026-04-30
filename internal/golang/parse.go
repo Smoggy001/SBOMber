@@ -65,6 +65,7 @@ func ParseGoMod(root string) (deps.Summary, error) {
 					Name:    parts[0],
 					Version: parts[1],
 					Scope:   deps.ScopeRuntime,
+                                        Ecosystem: "golang",
 				}
 				if isIndirect {
 					summary.Transitive = append(summary.Transitive, dep)

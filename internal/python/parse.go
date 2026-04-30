@@ -46,6 +46,7 @@ func ParseRequirements(root string) (deps.Summary, error) {
 				Name:    name,
 				Version: version,
 				Scope:   scope,
+                                Ecosystem: "pypi",
 			})
 		}
 

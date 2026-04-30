@@ -56,6 +56,7 @@ func ParsePOM(root string) (deps.Summary, error) {
 			Name:    dep.GroupID + ":" + dep.ArtifactID,
 			Version: dep.Version,
 			Scope:   scope,
+                        Ecosystem: "maven",
 		})
 	}
 

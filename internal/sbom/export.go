@@ -87,7 +87,7 @@ func saveCycloneDX(repoDir, repoName string, summary deps.Summary) (string, erro
 			Name:    dependency.Name,
 			Version: dependency.Version,
 			Scope:   string(dependency.Scope),
-			Purl:    buildPurl(dependency.Name, dependency.Version, "npm"),
+			Purl:    buildPurl(dependency.Name, dependency.Version, dependency.Ecosystem),
 		})
 	}
 	for _, dependency := range summary.Transitive {
@@ -96,7 +96,7 @@ func saveCycloneDX(repoDir, repoName string, summary deps.Summary) (string, erro
 			Name:    dependency.Name,
 			Version: dependency.Version,
 			Scope:   "transitive",
-			Purl:    buildPurl(dependency.Name, dependency.Version, "npm"),
+			Purl:    buildPurl(dependency.Name, dependency.Version, dependency.Ecosystem),
 		})
 	}
 

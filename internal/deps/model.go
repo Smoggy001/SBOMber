@@ -17,6 +17,7 @@ type Dependency struct {
 	Name    string
 	Version string
 	Scope   Scope
+        Ecosystem string
 }
 
 // Summary is a normalized dependency view that can later feed SBOM generation.

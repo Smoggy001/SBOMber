@@ -50,6 +50,7 @@ func ParsePackageJSON(root string) (deps.Summary, error) {
 				Name:    name,
 				Version: values[name],
 				Scope:   scope,
+                                Ecosystem: "npm",
 			})
 		}
 	}
