@@ -67,7 +67,7 @@ fi
 # ── TC-21: linter ─────────────────────────────────────────────────────────────
 header "TC-21  Code quality"
 LINT_OUT=$(golangci-lint run ./... 2>&1); LINT_EXIT=$?
-if [[ -z "$LINT_OUT" ]]; then
+if echo "$LINT_OUT" | grep -q "^0 issues"; then
   pass "TC-21  golangci-lint — 0 issues"
 else
   ISSUE_COUNT=$(echo "$LINT_OUT" | grep -c "^\s" || true)
@@ -142,10 +142,11 @@ check "TC-09  lodash appears in sample packages" \
   "echo '$OUT' | grep -q 'lodash'"
 check "TC-09  Direct dependency count shown" \
   "echo '$OUT' | grep -q 'direct'"
-if echo "$OUT" | grep -q "transitive"; then
-  pass "TC-09  Transitive dependencies detected (lock file parsed)"
+OUT2=$("$SBOMBER" scan "$FIXTURES/npm-basic" 2>&1)
+if echo "$OUT2" | grep -q "transitive"; then
+  pass "TC-09  Transitive dependencies detected (yarn.lock parsed)"
 else
-  warn "TC-09  No transitive deps shown — fixture may be missing yarn.lock"
+  warn "TC-09  No transitive deps shown — yarn.lock present but parser may not read it"
 fi
 
 # ── TC-10: no lock file ───────────────────────────────────────────────────────
