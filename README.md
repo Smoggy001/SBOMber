@@ -11,84 +11,47 @@
 </p>
 
 <p align="center">
-  <strong>Scan a folder full of repositories. Generate SBOMs for local workflows and CI/CD pipelines.</strong>
+  <strong>Scan a folder of repositories. Generate SBOMs. Find vulnerabilities. Know what actually matters.</strong>
 </p>
 
-SBOMber is an open-source Go CLI for scanning directories of locally cloned Git repositories and generating software bill of materials artifacts at scale.
+SBOMber is an open-source Go CLI that scans directories of locally cloned Git repositories, extracts their dependencies across five ecosystems, generates standards-based SBOM artifacts, and maps known CVEs against the results using Grype.
 
-The first milestone is clear: discover repositories, detect their ecosystems, and generate standards-based SBOMs. The tool is being designed for both local developer workflows and automated CI/CD execution. After that, the project expands into dependency metadata, outdated package analysis, vulnerability reporting, and supply-chain signals.
+It is designed for both local developer workflows and automated CI/CD execution. The current milestone covers the full scanning and SBOM generation pipeline. The next milestone adds CVE enrichment with EPSS scores, CISA KEV flags, GitHub Advisory remediation text, and a human-readable HTML report per repository.
 
 ## What It Is Built For
 
-- scanning a workspace that contains many Git repositories
-- detecting repo stacks from manifests and lockfiles
-- generating `CycloneDX` and `SPDX` output
-- handling direct and transitive dependencies
-- fitting into CI/CD, scripts, and local security workflows
+- scanning a workspace that contains many Git repositories at once
+- detecting repository stacks from manifests and lockfiles across five ecosystems
+- extracting direct and transitive dependencies
+- generating `CycloneDX` and `SPDX` SBOM output
+- mapping dependencies to known CVEs using Grype
+- fitting into CI/CD pipelines, scripts, and local security workflows
 
-## CI/CD Targets
+## Supported Ecosystems
 
-SBOMber is intended to run cleanly in non-interactive automation environments such as:
+| Ecosystem | Manifest files | Direct deps | Transitive deps |
+|-----------|---------------|-------------|-----------------|
+| npm | `package.json`, `yarn.lock`, `package-lock.json` | ✓ | ✓ via lock file |
+| Python | `requirements.txt`, `requirements-dev.txt` | ✓ | planned Semester 2 |
+| Maven | `pom.xml` | ✓ | planned Semester 2 |
+| Ruby | `Gemfile.lock` | ✓ | planned Semester 2 |
+| Go | `go.mod` | ✓ | ✓ via `// indirect` |
 
-- `GitHub Actions`
-- `GitLab CI/CD`
-- `Jenkins`
-- `Azure DevOps`
-
-That means the CLI should be designed around:
-
-- deterministic exit codes
-- machine-readable output
-- configurable output paths
-- non-interactive flags
-- simple integration into existing pipeline steps
-
-## Platform Targets
-
-SBOMber is being built as a cross-platform Go CLI for:
-
-- `macOS`
-- `Linux`
-- `Windows`
-
-Current development is source-first. Planned distribution targets include:
-
-- GitHub Releases binaries
-- `go install`
-- Homebrew formula
-- Scoop package
-
-## Ecosystem Targets
-
-The current product direction is multi-stack support for repositories using:
-
-- `npm` / `package-lock.json`
-- `Python` / `requirements.txt`, `pyproject.toml`, lockfiles
-- `Maven` / `pom.xml`
-- `Ruby` / `Gemfile.lock`
-- `Go` / `go.mod`, `go.sum`
-
-## Current Status
-
-Phase 1 is in active development:
-
-- interactive CLI with scan menu and export format selection
-- recursive Git repository discovery
-- ecosystem detection for npm, Python, Maven, Ruby, and Go
-- npm direct dependency parsing from `package.json`
-- npm transitive dependency parsing from `yarn.lock`
-- CI for formatting, vetting, and tests
-- OSS community files for issues, PRs, contributions, and security reporting
-
-Next up: CycloneDX and SPDX export to disk.
+Transitive resolution for Python, Maven, and Ruby requires running the respective package manager. This is a documented Semester 1 limitation and is planned for Semester 2.
 
 ## Quick Start
 
 ### Prerequisites
 
-- Go `1.26` or newer
+- Go `1.26` or newer (required)
+- [Grype](https://github.com/anchore/grype) (optional — required only for `--include-vulnerabilities`)
 
-### Build and run (macOS/Linux)
+```bash
+# Install Grype (macOS/Linux)
+curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh | sh -s -- -b /usr/local/bin
+```
+
+### Build and run (macOS / Linux)
 
 ```bash
 make tidy
@@ -96,10 +59,10 @@ make build
 ./bin/sbomber
 ```
 
-### Run without building (macOS/Linux)
+### Run without building (macOS / Linux)
 
 ```bash
-# Launch interactive mode (landing screen with menu)
+# Launch interactive TUI
 make run
 
 # Scan a specific folder
@@ -107,18 +70,26 @@ make scan SCAN_PATH=/path/to/your/projects
 
 # Scan with a specific export format
 make scan SCAN_PATH=/path/to/repo SCAN_ARGS='--format both'
+
+# Scan and include vulnerability results
+make scan SCAN_PATH=/path/to/repo SCAN_ARGS='--include-vulnerabilities'
+```
+
+### Non-interactive scan (CI/CD)
+
+```bash
+./bin/sbomber scan /path/to/workspace
+./bin/sbomber scan /path/to/workspace --format both
+./bin/sbomber scan /path/to/workspace --format cyclonedx --include-vulnerabilities
 ```
 
 ### Windows (PowerShell)
 
 ```powershell
-# Download dependencies
 go mod tidy
-
-# Run directly (no build step)
 go run ./cmd/sbomber
 
-# Or build and run
+# Build and run
 go build -o ./bin/sbomber.exe ./cmd/sbomber
 ./bin/sbomber.exe
 
@@ -134,50 +105,174 @@ make test
 
 ## Example Output
 
-```text
-  ____  ____   ___  __  __ _
- / ___|| __ ) / _ \|  \/  | |__   ___ _ __
- \___ \|  _ \| | | | |\/| | '_ \ / _ \ '__|
+Launching the interactive TUI:
+
+```
+  ____  ____   ___  __  __ ____
+ / ___|| __ ) / _ \|  \/  | __ )  ___ _ __
+ \___ \|  _ \| | | | |\/| |  _ \ / _ \ '__| 
   ___) | |_) | |_| | |  | | |_) |  __/ |
- |____/|____/ \___/|_|  |_|_.__/ \___|_|
+ |____/|____/ \___/|_|  |_|____/ \___|_|
 
- Select an option:
-  1) Scan current folder
-  2) Scan custom folder
-  3) Version
-  4) Help
+  v0.1.0
+
+  A lightweight CLI for scanning local repositories and generating SBOMs.
+
+  SELECT AN OPTION
+
+  ▸ ● Scan current folder    Scan repos in the current directory
+    ○ Scan custom folder     Choose a folder to scan
+    ○ Version                Show SBOMber version
+    ○ Help                   Show usage information
+    ○ Exit                   Quit SBOMber
+
+  ↑/↓ navigate  enter select  q quit
 ```
 
-Scanning an npm project:
+Scanning a mixed workspace:
 
-```text
-Found 1 repository under /workspace/prettier
-  prettier  [npm]
+```
+Found 3 repositories under /workspace
 
-npm dependency summary for prettier:
-  Direct dependencies (package.json):  146
-  Transitive dependencies (yarn.lock): 953
-  Total known dependencies:            1099
+- prettier  /workspace/prettier  [npm]
+  exported SBOM: /workspace/prettier/sbom-cyclonedx.xml
+  packages:  146 direct, 953 transitive (1099 total)
+  direct dependencies (package.json): 146 (runtime: 132, development: 14)
+  transitive dependencies: 953
+  total known dependencies: 1099
+  sample packages: acorn, ansi-styles, browserslist, chalk, cliui
+
+- flask-api  /workspace/flask-api  [python]
+  exported SBOM: /workspace/flask-api/sbom-cyclonedx.xml
+  packages:  4 direct
+  direct dependencies (requirements.txt): 4 (runtime: 4)
+  sample packages: flask, jinja2, requests, werkzeug
+
+- my-service  /workspace/my-service  [go]
+  exported SBOM: /workspace/my-service/sbom-cyclonedx.xml
+  packages:  3 direct, 12 transitive (15 total)
+  direct dependencies (go.mod): 3 (runtime: 3)
+  transitive dependencies: 12
+  total known dependencies: 15
+  sample packages: github.com/gin-gonic/gin, github.com/spf13/cobra, golang.org/x/crypto
+
+Scan complete: 3 repositories scanned
 ```
 
-## Roadmap
+Vulnerability scanning:
 
-- repository discovery and workspace scanning
-- ecosystem detection from manifests and lockfiles
-- SBOM generation for supported stacks
-- CI/CD-friendly execution and export flows
-- metadata and outdated dependency reporting
-- vulnerability and supply-chain analysis
+```
+- npm-basic  /workspace/npm-basic  [npm]
+  exported SBOM: /workspace/npm-basic/sbom-cyclonedx.xml
+  packages:  1 direct, 953 transitive (954 total)
+  ...
+  vulnerabilities found: 3
+  critical: 0  high: 1  medium: 2  low: 0
+  - CVE-2021-23337 [high] package=lodash type=npm
+  - CVE-2020-8203  [high] package=lodash type=npm
+```
+
+## CI/CD Targets
+
+SBOMber runs cleanly in non-interactive automation environments:
+
+- `GitHub Actions`
+- `GitLab CI/CD`
+- `Jenkins`
+- `Azure DevOps`
+
+Non-interactive scan mode with the `scan` subcommand and flags:
+
+```bash
+./bin/sbomber scan /path/to/workspace --format cyclonedx --include-vulnerabilities
+```
+
+Exit codes (Sprint 3):
+
+| Code | Meaning |
+|------|---------|
+| `0` | Scan complete, no findings above threshold |
+| `1` | Scan complete, findings found above threshold |
+| `2` | Tool or argument error |
+
+## Platform Targets
+
+SBOMber is built as a cross-platform Go CLI:
+
+- `macOS`
+- `Linux`
+- `Windows`
+
+Planned distribution:
+
+- GitHub Releases binaries
+- `go install`
+- Homebrew formula
+
+## Current Status
+
+Sprint 2 is complete. The following are implemented and tested:
+
+**Repository scanning**
+- interactive TUI with bubbletea (scan menu, format selection, path input)
+- non-interactive `scan` subcommand for CI/CD use
+- recursive Git repository discovery across nested folder structures
+- per-repository output and workspace total summary
+
+**Ecosystem detection and dependency extraction**
+- npm: direct dependencies from `package.json`, transitive from `yarn.lock`
+- Python: direct dependencies from `requirements.txt` and `requirements-dev.txt`
+- Maven: direct dependencies from `pom.xml`
+- Ruby: direct dependencies from `Gemfile.lock`
+- Go: direct and indirect dependencies from `go.mod`
+
+**SBOM generation**
+- CycloneDX 1.5 XML with `purl` identifiers and scan timestamp
+- SPDX 2.3 tag-value format with scan timestamp
+- both formats written per repository to the repository directory
+
+**Vulnerability scanning**
+- Grype subprocess integration via `--include-vulnerabilities`
+- CVE ID, severity, package name, and package type per finding
+
+**Quality**
+- unit tests for all packages
+- golangci-lint clean (errcheck, govet, ineffassign, staticcheck, unused)
+- CI on push and pull request
+
+**Sprint 3 (next — Weeks 10–12)**
+- EPSS score per CVE (exploit probability)
+- CISA Known Exploited Vulnerabilities flag per CVE
+- GitHub Advisory remediation text per CVE
+- Package health metadata (maintainers, downloads, last published, risk flags)
+- `findings.json` machine-readable output per repository
+- HTML report with prioritised findings per repository
+- `--output`, `--severity-threshold`, `--fail-on-vuln`, `--no-color` CLI flags
+- Exit codes 0/1/2 for CI/CD integration
+- Integration test suite
+
+**Semester 2**
+- Function-level call graph
+- Reachability and taint analysis
+- VEX document generation
+- Dependency confusion detection
 
 ## Project Layout
 
 ```text
 cmd/sbomber/        CLI entrypoint
-internal/cli/       interactive CLI and scan flow
+internal/cli/       interactive TUI and scan flow (cli.go, tui.go)
 internal/discovery/ recursive repository scanning
 internal/ecosystem/ manifest-based ecosystem detection
 internal/deps/      shared dependency data model
 internal/npm/       npm and yarn.lock parsing
+internal/python/    requirements.txt parsing
+internal/maven/     pom.xml parsing
+internal/ruby/      Gemfile.lock parsing
+internal/golang/    go.mod parsing
+internal/sbom/      CycloneDX and SPDX export
+internal/vulnerability/ Grype vulnerability scanning
+testdata/fixtures/  integration test fixtures for all five ecosystems
 docs/assets/        branding and repository visuals
 .github/            CI and community health files
 ```
@@ -185,10 +280,11 @@ docs/assets/        branding and repository visuals
 ## Development
 
 ```bash
-make fmt
-make test
-make vet
-make ci
+make fmt       # format all Go source
+make test      # run unit tests
+make vet       # run go vet
+make ci        # fmt + vet + test
+make build     # compile to ./bin/sbomber
 ```
 
 ## Contributing
