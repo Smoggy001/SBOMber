@@ -62,9 +62,10 @@ func ParseGoMod(root string) (deps.Summary, error) {
 			parts := strings.Fields(remainder)
 			if len(parts) >= 2 {
 				dep := deps.Dependency{
-					Name:    parts[0],
-					Version: parts[1],
-					Scope:   deps.ScopeRuntime,
+					Name:      parts[0],
+					Version:   parts[1],
+					Scope:     deps.ScopeRuntime,
+					Ecosystem: "golang",
 				}
 				if isIndirect {
 					summary.Transitive = append(summary.Transitive, dep)

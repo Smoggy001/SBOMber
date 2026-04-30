@@ -66,9 +66,10 @@ func EnrichFromYarnLock(root string, summary deps.Summary) (deps.Summary, error)
 		}
 
 		transitive[key] = deps.Dependency{
-			Name:    entry.Name,
-			Version: entry.Version,
-			Scope:   deps.Scope("transitive"),
+			Name:      entry.Name,
+			Version:   entry.Version,
+			Scope:     deps.Scope("transitive"),
+			Ecosystem: "npm",
 		}
 	}
 

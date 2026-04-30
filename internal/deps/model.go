@@ -14,9 +14,10 @@ const (
 
 // Dependency describes a single direct dependency declared by a manifest.
 type Dependency struct {
-	Name    string
-	Version string
-	Scope   Scope
+	Name      string
+	Version   string
+	Scope     Scope
+	Ecosystem string
 }
 
 // Summary is a normalized dependency view that can later feed SBOM generation.

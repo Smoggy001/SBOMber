@@ -47,9 +47,10 @@ func ParsePackageJSON(root string) (deps.Summary, error) {
 
 		for _, name := range names {
 			summary.Direct = append(summary.Direct, deps.Dependency{
-				Name:    name,
-				Version: values[name],
-				Scope:   scope,
+				Name:      name,
+				Version:   values[name],
+				Scope:     scope,
+				Ecosystem: "npm",
 			})
 		}
 	}
