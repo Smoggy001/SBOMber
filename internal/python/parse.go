@@ -43,10 +43,10 @@ func ParseRequirements(root string) (deps.Summary, error) {
 			}
 
 			summary.Direct = append(summary.Direct, deps.Dependency{
-				Name:    name,
-				Version: version,
-				Scope:   scope,
-                                Ecosystem: "pypi",
+				Name:      name,
+				Version:   version,
+				Scope:     scope,
+				Ecosystem: "pypi",
 			})
 		}
 

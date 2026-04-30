@@ -53,10 +53,10 @@ func ParsePOM(root string) (deps.Summary, error) {
 		}
 
 		summary.Direct = append(summary.Direct, deps.Dependency{
-			Name:    dep.GroupID + ":" + dep.ArtifactID,
-			Version: dep.Version,
-			Scope:   scope,
-                        Ecosystem: "maven",
+			Name:      dep.GroupID + ":" + dep.ArtifactID,
+			Version:   dep.Version,
+			Scope:     scope,
+			Ecosystem: "maven",
 		})
 	}
 

@@ -88,10 +88,10 @@ func ParseGemfileLock(root string) (deps.Summary, error) {
 		}
 
 		summary.Direct = append(summary.Direct, deps.Dependency{
-			Name:    name,
-			Version: version,
-			Scope:   deps.ScopeRuntime,
-                        Ecosystem: "gem",
+			Name:      name,
+			Version:   version,
+			Scope:     deps.ScopeRuntime,
+			Ecosystem: "gem",
 		})
 	}
 
