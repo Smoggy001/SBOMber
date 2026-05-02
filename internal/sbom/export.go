@@ -12,6 +12,7 @@ import (
 )
 
 const (
+	OutputDirName     = "sbomber-output"
 	cycloneDXFilename = "sbom-cyclonedx.xml"
 	spdxFilename      = "sbom.spdx"
 )
@@ -42,29 +43,36 @@ type cycloneDXComponent struct {
 }
 
 // SaveSBOM writes one or more SBOM files for the repository.
-func SaveSBOM(repoDir, repoName string, summary deps.Summary, format string) ([]string, error) {
+// Returns the list of saved file paths and the output directory path.
+func SaveSBOM(repoDir, repoName string, summary deps.Summary, format string) ([]string, string, error) {
 	saved := make([]string, 0, 2)
 	if format == "" {
-		return saved, nil
+		return saved, "", nil
+	}
+
+	// Create output directory
+	outputDir := filepath.Join(repoDir, OutputDirName)
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return nil, "", fmt.Errorf("create output directory: %w", err)
 	}
 
 	if format == "cyclonedx" || format == "both" {
-		path, err := saveCycloneDX(repoDir, repoName, summary)
+		path, err := saveCycloneDX(outputDir, repoName, summary)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		saved = append(saved, path)
 	}
 
 	if format == "spdx" || format == "both" {
-		path, err := saveSPDX(repoDir, repoName, summary)
+		path, err := saveSPDX(outputDir, repoName, summary)
 		if err != nil {
-			return nil, err
+			return nil, "", err
 		}
 		saved = append(saved, path)
 	}
 
-	return saved, nil
+	return saved, outputDir, nil
 }
 
 func saveCycloneDX(repoDir, repoName string, summary deps.Summary) (string, error) {

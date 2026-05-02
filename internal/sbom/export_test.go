@@ -20,7 +20,7 @@ func TestSaveSBOMCreatesFiles(t *testing.T) {
 		},
 	}
 
-	files, err := SaveSBOM(tmp, "prettier", summary, "both")
+	files, outputDir, err := SaveSBOM(tmp, "prettier", summary, "both")
 	if err != nil {
 		t.Fatalf("expected no error saving sbom, got %v", err)
 	}
@@ -29,18 +29,23 @@ func TestSaveSBOMCreatesFiles(t *testing.T) {
 		t.Fatalf("expected 2 files saved, got %d", len(files))
 	}
 
+	expectedOutputDir := filepath.Join(tmp, OutputDirName)
+	if outputDir != expectedOutputDir {
+		t.Fatalf("expected output dir %q, got %q", expectedOutputDir, outputDir)
+	}
+
 	for _, path := range files {
 		if _, err := os.Stat(path); err != nil {
 			t.Fatalf("expected file %q to exist, got error %v", path, err)
 		}
 	}
 
-	cyclonePath := filepath.Join(tmp, cycloneDXFilename)
+	cyclonePath := filepath.Join(outputDir, cycloneDXFilename)
 	if _, err := os.ReadFile(cyclonePath); err != nil {
 		t.Fatalf("expected cyclonedx file to be readable, got %v", err)
 	}
 
-	spdxPath := filepath.Join(tmp, spdxFilename)
+	spdxPath := filepath.Join(outputDir, spdxFilename)
 	if _, err := os.ReadFile(spdxPath); err != nil {
 		t.Fatalf("expected spdx file to be readable, got %v", err)
 	}
