@@ -3,6 +3,7 @@ package sbom
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Xsamsx/SBOMber/internal/deps"
@@ -29,9 +30,9 @@ func TestSaveSBOMCreatesFiles(t *testing.T) {
 		t.Fatalf("expected 2 files saved, got %d", len(files))
 	}
 
-	expectedOutputDir := filepath.Join(tmp, OutputDirName)
-	if outputDir != expectedOutputDir {
-		t.Fatalf("expected output dir %q, got %q", expectedOutputDir, outputDir)
+	// Output should be in ~/.sbomber/reports/
+	if !strings.Contains(outputDir, SBOMberDir) || !strings.Contains(outputDir, ReportsDir) {
+		t.Fatalf("expected output dir to be in ~/.sbomber/reports/, got %q", outputDir)
 	}
 
 	for _, path := range files {
@@ -49,4 +50,7 @@ func TestSaveSBOMCreatesFiles(t *testing.T) {
 	if _, err := os.ReadFile(spdxPath); err != nil {
 		t.Fatalf("expected spdx file to be readable, got %v", err)
 	}
+
+	// Cleanup test output
+	os.RemoveAll(outputDir)
 }

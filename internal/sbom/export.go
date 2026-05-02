@@ -12,7 +12,6 @@ import (
 )
 
 const (
-	OutputDirName     = "sbomber-output"
 	cycloneDXFilename = "sbom-cyclonedx.xml"
 	spdxFilename      = "sbom.spdx"
 )
@@ -44,16 +43,17 @@ type cycloneDXComponent struct {
 
 // SaveSBOM writes one or more SBOM files for the repository.
 // Returns the list of saved file paths and the output directory path.
+// Output is stored in ~/.sbomber/reports/<project-name>/
 func SaveSBOM(repoDir, repoName string, summary deps.Summary, format string) ([]string, string, error) {
 	saved := make([]string, 0, 2)
 	if format == "" {
 		return saved, "", nil
 	}
 
-	// Create output directory
-	outputDir := filepath.Join(repoDir, OutputDirName)
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return nil, "", fmt.Errorf("create output directory: %w", err)
+	// Get central output directory
+	outputDir, err := GetOutputDir(repoDir)
+	if err != nil {
+		return nil, "", err
 	}
 
 	if format == "cyclonedx" || format == "both" {

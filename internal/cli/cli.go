@@ -154,7 +154,12 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 					fmt.Fprintf(stderr, "Invalid path: %v\n", err)
 					continue
 				}
-				outputFolder := filepath.Join(absPath, sbom.OutputDirName)
+				// Get central output folder in ~/.sbomber/reports/
+				outputFolder, err := sbom.GetOutputDir(absPath)
+				if err != nil {
+					fmt.Fprintf(stderr, "Failed to create output directory: %v\n", err)
+					continue
+				}
 
 				// Show scanning message
 				fmt.Print("\033[H\033[2J") // Clear screen
