@@ -4,6 +4,7 @@ bin/
 dist/
 coverage.out
 *.exe
+.claude/
 sbom-cyclonedx.xml
 sbom-cyclonedx.json
 sbom.spdx
