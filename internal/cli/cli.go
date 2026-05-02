@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"flag"
 	"fmt"
@@ -138,7 +139,7 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer) int {
 func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	if stdin == os.Stdin && stdout == os.Stdout {
 		for {
-			action, scanPath, scanFormat := runTUI()
+			action, scanPath, scanFormat, includeVulns := runTUI()
 			switch action {
 			case "scan":
 				if scanPath == "" {
@@ -147,18 +148,48 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 				if scanFormat == "" {
 					scanFormat = formatCycloneDX
 				}
-				runScan([]string{"--format", scanFormat, scanPath}, stdout, stderr)
-				fmt.Fprint(stdout, "\nPress Enter to continue...")
-				bufio.NewReader(os.Stdin).ReadBytes('\n')
+				// Get absolute path for output folder
+				absPath, _ := filepath.Abs(scanPath)
+				outputFolder := filepath.Join(absPath, sbom.OutputDirName)
+
+				// Show scanning message
+				fmt.Print("\033[H\033[2J") // Clear screen
+				fmt.Println()
+				fmt.Println("  \033[1m\033[36mScanning...\033[0m")
+				fmt.Println()
+				fmt.Printf("  Path:   %s\n", absPath)
+				fmt.Printf("  Format: %s\n", scanFormat)
+				if includeVulns {
+					fmt.Println("  Vulns:  enabled (Grype)")
+				}
+				fmt.Println()
+				fmt.Println("  \033[90mThis may take a moment...\033[0m")
+
+				var buf bytes.Buffer
+				args := []string{"--format", scanFormat}
+				if includeVulns {
+					args = append(args, "--include-vulnerabilities")
+				}
+				args = append(args, scanPath)
+				runScan(args, &buf, &buf) // Capture both stdout and stderr
+
+				if quit := showResultsScreen(buf.String(), outputFolder); quit {
+					fmt.Print("\033[H\033[2J")
+					fmt.Fprint(stdout, "Goodbye!\n")
+					return 0
+				}
 			case "version":
-				_, _ = fmt.Fprintf(stdout, "sbomber %s\n", version)
-				fmt.Fprint(stdout, "\nPress Enter to continue...")
-				bufio.NewReader(os.Stdin).ReadBytes('\n')
+				if quit := showResultsScreen(fmt.Sprintf("SBOMber %s", version), ""); quit {
+					return 0
+				}
 			case "help":
-				printUsage(stdout)
-				fmt.Fprint(stdout, "\nPress Enter to continue...")
-				bufio.NewReader(os.Stdin).ReadBytes('\n')
+				var buf bytes.Buffer
+				printUsage(&buf)
+				if quit := showResultsScreen(buf.String(), ""); quit {
+					return 0
+				}
 			case "exit", "":
+				fmt.Print("\033[H\033[2J")
 				fmt.Fprint(stdout, "Goodbye!\n")
 				return 0
 			}
@@ -307,19 +338,25 @@ func printDependencySummary(stdout io.Writer, stderr io.Writer, repoName, repoPa
 		return
 	}
 
-	savedPaths, err := sbom.SaveSBOM(repoPath, repoName, summary, selectedFormat)
+	savedPaths, outputDir, err := sbom.SaveSBOM(repoPath, repoName, summary, selectedFormat)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "save SBOM for %s: %v\n", repoPath, err)
 	} else {
+		_, _ = fmt.Fprintf(stdout, "  output folder: %s\n", outputDir)
 		var spdxPath string
 		for _, path := range savedPaths {
-			_, _ = fmt.Fprintf(stdout, "  exported SBOM: %s\n", path)
+			_, _ = fmt.Fprintf(stdout, "  exported SBOM: %s\n", filepath.Base(path))
 			if strings.HasSuffix(path, "sbom.spdx") {
 				spdxPath = path
 			}
 		}
-		if spdxPath != "" && includeVulnerabilities {
-			reportSPDXVulnerabilities(stdout, stderr, spdxPath)
+		if includeVulnerabilities {
+			// Run vulnerability scan and generate HTML report
+			scanPath := repoPath
+			if spdxPath != "" {
+				scanPath = "sbom:" + spdxPath
+			}
+			generateVulnReport(stdout, stderr, scanPath, outputDir, repoName)
 		}
 	}
 
@@ -381,13 +418,6 @@ func printDependencySummary(stdout io.Writer, stderr io.Writer, repoName, repoPa
 	}
 
 	_, _ = fmt.Fprintf(stdout, "  sample packages: %s\n", strings.Join(preview, ", "))
-
-	if includeVulnerabilities {
-		// If SPDX was already generated and reported, skip a second scan.
-		if !strings.HasSuffix(selectedFormat, "spdx") && !strings.HasSuffix(selectedFormat, "both") {
-			scanVulnerabilities(stdout, stderr, repoPath)
-		}
-	}
 }
 
 func buildRepoDependencySummary(repoPath string, detection ecosystem.Detection) (deps.Summary, error) {
@@ -446,55 +476,37 @@ func buildRepoDependencySummary(repoPath string, detection ecosystem.Detection) 
 	return summary, nil
 }
 
-func scanVulnerabilities(stdout io.Writer, stderr io.Writer, repoPath string) {
+func generateVulnReport(stdout io.Writer, stderr io.Writer, scanPath, outputDir, repoName string) {
 	if !vulnerability.IsGrypeAvailable() {
 		_, _ = fmt.Fprintf(stderr, "  note: grype not available, skipping vulnerability scan\n")
 		return
 	}
 
 	ctx := context.Background()
-	vulnResults, err := vulnerability.ScanWithGrype(ctx, repoPath)
+	vulnResults, err := vulnerability.ScanWithGrype(ctx, scanPath)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "  vulnerability scan failed for %s: %v\n", repoPath, err)
+		_, _ = fmt.Fprintf(stderr, "  vulnerability scan failed: %v\n", err)
 		return
 	}
 
+	// Print summary to terminal
 	if vulnResults.TotalCount == 0 {
 		_, _ = fmt.Fprintf(stdout, "  vulnerabilities found: 0\n")
-		return
+	} else {
+		_, _ = fmt.Fprintf(stdout, "  vulnerabilities found: %d\n", vulnResults.TotalCount)
+		counts := vulnResults.CountBySeverity()
+		for severity, count := range counts {
+			_, _ = fmt.Fprintf(stdout, "    - %s: %d\n", severity, count)
+		}
 	}
 
-	_, _ = fmt.Fprintf(stdout, "  vulnerabilities found: %d\n", vulnResults.TotalCount)
-
-	counts := vulnResults.CountBySeverity()
-	for severity, count := range counts {
-		_, _ = fmt.Fprintf(stdout, "    - %s: %d\n", severity, count)
-	}
-}
-
-func reportSPDXVulnerabilities(stdout io.Writer, stderr io.Writer, spdxPath string) {
-	if !vulnerability.IsGrypeAvailable() {
-		_, _ = fmt.Fprintf(stderr, "  note: grype not available, skipping SPDX vulnerability report\n")
-		return
-	}
-
-	ctx := context.Background()
-	vulnResults, err := vulnerability.ScanWithGrype(ctx, "sbom:"+spdxPath)
+	// Generate HTML report
+	reportPath, err := vulnerability.GenerateHTMLReport(outputDir, repoName, vulnResults)
 	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "  SPDX vulnerability scan failed for %s: %v\n", spdxPath, err)
+		_, _ = fmt.Fprintf(stderr, "  failed to generate HTML report: %v\n", err)
 		return
 	}
-
-	_, _ = fmt.Fprintf(stdout, "  SPDX vulnerability findings for %s:\n", filepath.Base(spdxPath))
-	if vulnResults.TotalCount == 0 {
-		_, _ = fmt.Fprintf(stdout, "    no vulnerabilities found\n")
-		return
-	}
-
-	_, _ = fmt.Fprintf(stdout, "    total vulnerabilities found: %d\n", vulnResults.TotalCount)
-	for _, vuln := range vulnResults.Vulnerabilities {
-		_, _ = fmt.Fprintf(stdout, "      - %s [%s] package=%s type=%s\n", vuln.Vulnerability, strings.ToUpper(vuln.Severity[:1])+strings.ToLower(vuln.Severity[1:]), vuln.PackageName, vuln.PackageType)
-	}
+	_, _ = fmt.Fprintf(stdout, "  HTML report: %s\n", filepath.Base(reportPath))
 }
 
 func containsEcosystem(names []ecosystem.Name, candidate ecosystem.Name) bool {

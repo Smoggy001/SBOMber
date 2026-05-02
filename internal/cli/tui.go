@@ -2,6 +2,8 @@ package cli
 
 import (
 	"fmt"
+	"os/exec"
+	"runtime"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -59,6 +61,7 @@ type viewState int
 const (
 	viewMenu viewState = iota
 	viewFormat
+	viewVulnScan
 	viewPathInput
 	viewScanning
 	viewDone
@@ -72,16 +75,18 @@ type menuItem struct {
 
 // TUI model
 type model struct {
-	state      viewState
-	cursor     int
-	items      []menuItem
-	formats    []menuItem
-	selected   string
-	scanPath   string
-	scanFormat string
-	pathInput  string
-	scanOutput string
-	quitting   bool
+	state        viewState
+	cursor       int
+	items        []menuItem
+	formats      []menuItem
+	vulnOptions  []menuItem
+	selected     string
+	scanPath     string
+	scanFormat   string
+	includeVulns bool
+	pathInput    string
+	scanOutput   string
+	quitting     bool
 }
 
 func newModel() model {
@@ -99,6 +104,10 @@ func newModel() model {
 			{label: "SPDX", desc: "alternative standard"},
 			{label: "Both", desc: "generate both formats"},
 		},
+		vulnOptions: []menuItem{
+			{label: "Yes", desc: "scan for CVEs using Grype"},
+			{label: "No", desc: "skip vulnerability scanning"},
+		},
 	}
 }
 
@@ -114,6 +123,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateMenu(msg)
 		case viewFormat:
 			return m.updateFormat(msg)
+		case viewVulnScan:
+			return m.updateVulnScan(msg)
 		case viewPathInput:
 			return m.updatePathInput(msg)
 		case viewScanning, viewDone:
@@ -178,11 +189,35 @@ func (m model) updateFormat(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case 2:
 			m.scanFormat = formatBoth
 		}
+		m.state = viewVulnScan
+		m.cursor = 0
+	case "esc":
+		m.state = viewMenu
+		m.cursor = 0
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m model) updateVulnScan(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < len(m.vulnOptions)-1 {
+			m.cursor++
+		}
+	case "enter":
+		m.includeVulns = m.cursor == 0
 		m.selected = "scan"
 		m.state = viewScanning
 		return m, tea.Quit
 	case "esc":
-		m.state = viewMenu
+		m.state = viewFormat
 		m.cursor = 0
 	case "q", "ctrl+c":
 		m.quitting = true
@@ -251,6 +286,8 @@ func (m model) View() string {
 		b.WriteString(m.renderMenu())
 	case viewFormat:
 		b.WriteString(m.renderFormatSelect())
+	case viewVulnScan:
+		b.WriteString(m.renderVulnScan())
 	case viewPathInput:
 		b.WriteString(m.renderPathInput())
 	case viewDone:
@@ -333,6 +370,42 @@ func (m model) renderFormatSelect() string {
 	return b.String()
 }
 
+func (m model) renderVulnScan() string {
+	var b strings.Builder
+
+	header := titleStyle.MarginLeft(2).Render("  VULNERABILITY SCANNING")
+	b.WriteString(header + "\n\n")
+
+	scanLabel := accentStyle.Render(m.scanPath)
+	formatLabel := accentStyle.Render(m.scanFormat)
+	b.WriteString(dimStyle.MarginLeft(2).Render("  Scanning: ") + scanLabel + "\n")
+	b.WriteString(dimStyle.MarginLeft(2).Render("  Format: ") + formatLabel + "\n\n")
+
+	b.WriteString(dimStyle.MarginLeft(2).Render("  Include vulnerability scan with Grype?") + "\n\n")
+
+	for i, item := range m.vulnOptions {
+		cursor := "  "
+		label := unselectedStyle.Render(item.label)
+		desc := dimStyle.Render(item.desc)
+		bullet := dimStyle.Render("○")
+
+		if m.cursor == i {
+			cursor = selectedStyle.Render("▸ ")
+			label = selectedStyle.Render(item.label)
+			bullet = successStyle.Render("●")
+			desc = subtitleStyle.Render(item.desc)
+		}
+
+		line := fmt.Sprintf("  %s %s %s  %s", cursor, bullet, label, desc)
+		b.WriteString(line + "\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(dimStyle.MarginLeft(2).Render("  ↑/↓ navigate  enter select  esc back") + "\n")
+
+	return b.String()
+}
+
 func (m model) renderPathInput() string {
 	var b strings.Builder
 
@@ -386,22 +459,175 @@ func renderHelp() string {
 }
 
 // runTUI launches the bubbletea interactive TUI and returns the user's choice.
-func runTUI() (action string, scanPath string, scanFormat string) {
+func runTUI() (action string, scanPath string, scanFormat string, includeVulns bool) {
 	m := newModel()
 
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	finalModel, err := p.Run()
 	if err != nil {
-		return "exit", "", ""
+		return "exit", "", "", false
 	}
 
 	final := finalModel.(model)
 	if final.quitting && final.selected == "" {
-		return "exit", "", ""
+		return "exit", "", "", false
 	}
 
 	// Clear screen after TUI exits for clean transition
 	fmt.Print("\033[H\033[2J")
 
-	return final.selected, final.scanPath, final.scanFormat
+	return final.selected, final.scanPath, final.scanFormat, final.includeVulns
+}
+
+// resultsModel for showing scan results with actions
+type resultsModel struct {
+	content    string
+	outputPath string
+	cursor     int
+	actions    []string
+	quitting   bool
+	openFolder bool
+}
+
+func newResultsModel(content, outputPath string) resultsModel {
+	return resultsModel{
+		content:    content,
+		outputPath: outputPath,
+		cursor:     0,
+		actions:    []string{"Back to menu", "Open output folder", "Quit"},
+	}
+}
+
+func (m resultsModel) Init() tea.Cmd {
+	return nil
+}
+
+func (m resultsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		switch msg.String() {
+		case "up", "k":
+			if m.cursor > 0 {
+				m.cursor--
+			}
+		case "down", "j":
+			if m.cursor < len(m.actions)-1 {
+				m.cursor++
+			}
+		case "enter":
+			switch m.cursor {
+			case 0: // Back to menu
+				m.quitting = true
+				return m, tea.Quit
+			case 1: // Open folder - open and stay
+				if m.outputPath != "" {
+					openFolder(m.outputPath)
+				}
+				return m, nil // Stay on results screen
+			case 2: // Quit
+				m.quitting = true
+				m.cursor = 2 // Mark as quit
+				return m, tea.Quit
+			}
+		case "q", "ctrl+c", "esc":
+			m.quitting = true
+			return m, tea.Quit
+		}
+	}
+	return m, nil
+}
+
+func (m resultsModel) View() string {
+	if m.quitting {
+		return ""
+	}
+
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(renderBanner())
+
+	// Results header
+	headerBox := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00FF88")).
+		MarginLeft(4).
+		MarginBottom(1)
+	b.WriteString(headerBox.Render("SCAN COMPLETE") + "\n\n")
+
+	// Content - no color styling so it works on light and dark terminals
+	// Render each line with just margin
+	for _, line := range strings.Split(m.content, "\n") {
+		b.WriteString("    " + line + "\n")
+	}
+	b.WriteString("\n")
+
+	// Output location
+	if m.outputPath != "" {
+		pathStyle := lipgloss.NewStyle().
+			MarginLeft(4).
+			Foreground(lipgloss.Color("#888888"))
+		pathValue := lipgloss.NewStyle().
+			Foreground(lipgloss.Color("#00D4FF"))
+		b.WriteString(pathStyle.Render("Output: ") + pathValue.Render(m.outputPath) + "\n\n")
+	}
+
+	// Divider
+	divider := lipgloss.NewStyle().
+		MarginLeft(4).
+		Foreground(lipgloss.Color("#444444"))
+	b.WriteString(divider.Render("─────────────────────────────────────────") + "\n\n")
+
+	// Actions
+	actionHeader := lipgloss.NewStyle().
+		Bold(true).
+		Foreground(lipgloss.Color("#00D4FF")).
+		MarginLeft(4)
+	b.WriteString(actionHeader.Render("WHAT'S NEXT?") + "\n\n")
+
+	for i, action := range m.actions {
+		cursor := "  "
+		label := unselectedStyle.Render(action)
+		bullet := dimStyle.Render("○")
+
+		if m.cursor == i {
+			cursor = selectedStyle.Render("▸ ")
+			label = selectedStyle.Render(action)
+			bullet = successStyle.Render("●")
+		}
+
+		line := fmt.Sprintf("  %s %s %s", cursor, bullet, label)
+		b.WriteString(lipgloss.NewStyle().MarginLeft(2).Render(line) + "\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(dimStyle.MarginLeft(4).Render("↑/↓ navigate  enter select") + "\n")
+
+	return b.String()
+}
+
+// showResultsScreen displays scan results in a styled TUI view
+func showResultsScreen(content, outputPath string) bool {
+	m := newResultsModel(content, outputPath)
+	p := tea.NewProgram(m, tea.WithAltScreen())
+	finalModel, _ := p.Run()
+	final := finalModel.(resultsModel)
+
+	// Return true if user wants to quit entirely (cursor == 2)
+	return final.cursor == 2
+}
+
+// openFolder opens the folder in the system file manager
+func openFolder(path string) {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("open", path)
+	case "linux":
+		cmd = exec.Command("xdg-open", path)
+	case "windows":
+		cmd = exec.Command("explorer", path)
+	}
+	if cmd != nil {
+		_ = cmd.Start()
+	}
 }
