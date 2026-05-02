@@ -25,7 +25,7 @@ func EnrichFromYarnLock(root string, summary deps.Summary) (deps.Summary, error)
 	if err != nil {
 		return summary, err
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	entries, err := parseYarnLock(file)
 	if err != nil {
