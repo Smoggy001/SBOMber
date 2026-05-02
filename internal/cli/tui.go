@@ -2,7 +2,9 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -227,30 +229,30 @@ func (m model) updateVulnScan(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) updatePathInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.String() {
-	case "enter":
+	switch msg.Type {
+	case tea.KeyEnter:
 		if m.pathInput == "" {
 			m.pathInput = "."
 		}
 		m.scanPath = m.pathInput
 		m.state = viewFormat
 		m.cursor = 0
-	case "backspace":
+	case tea.KeyBackspace:
 		if len(m.pathInput) > 0 {
 			m.pathInput = m.pathInput[:len(m.pathInput)-1]
 		}
-	case "esc":
+	case tea.KeyEsc:
 		m.state = viewMenu
 		m.cursor = 0
-	case "ctrl+c":
+	case tea.KeyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
-	default:
-		if len(msg.String()) == 1 {
-			m.pathInput += msg.String()
-		} else if msg.String() == "space" {
-			m.pathInput += " "
-		}
+	case tea.KeyTab:
+		m.pathInput = expandPathWithTab(m.pathInput)
+	case tea.KeySpace:
+		m.pathInput += " "
+	case tea.KeyRunes:
+		m.pathInput += string(msg.Runes)
 	}
 	return m, nil
 }
@@ -630,4 +632,88 @@ func openFolder(path string) {
 	if cmd != nil {
 		_ = cmd.Start()
 	}
+}
+
+// expandPathWithTab provides basic tab completion for paths
+func expandPathWithTab(input string) string {
+	if input == "" {
+		return input
+	}
+
+	// Expand ~ to home directory
+	path := input
+	if strings.HasPrefix(path, "~") {
+		home, err := os.UserHomeDir()
+		if err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~"))
+		}
+	}
+
+	// Get directory and prefix
+	dir := filepath.Dir(path)
+	prefix := filepath.Base(path)
+
+	// If path ends with /, list contents of that directory
+	if strings.HasSuffix(input, "/") || strings.HasSuffix(input, string(filepath.Separator)) {
+		dir = path
+		prefix = ""
+	}
+
+	// Read directory
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return input
+	}
+
+	// Find matching entries
+	var matches []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if strings.HasPrefix(strings.ToLower(name), strings.ToLower(prefix)) {
+			fullPath := filepath.Join(dir, name)
+			if entry.IsDir() {
+				fullPath += string(filepath.Separator)
+			}
+			matches = append(matches, fullPath)
+		}
+	}
+
+	// Return first match or original input
+	if len(matches) == 1 {
+		// Convert back to use ~ if it was used
+		if strings.HasPrefix(input, "~") {
+			home, _ := os.UserHomeDir()
+			if strings.HasPrefix(matches[0], home) {
+				return "~" + strings.TrimPrefix(matches[0], home)
+			}
+		}
+		return matches[0]
+	}
+
+	// Find common prefix among matches
+	if len(matches) > 1 {
+		common := matches[0]
+		for _, m := range matches[1:] {
+			for i := 0; i < len(common) && i < len(m); i++ {
+				if common[i] != m[i] {
+					common = common[:i]
+					break
+				}
+			}
+			if len(m) < len(common) {
+				common = common[:len(m)]
+			}
+		}
+		if len(common) > len(path) {
+			if strings.HasPrefix(input, "~") {
+				home, _ := os.UserHomeDir()
+				if strings.HasPrefix(common, home) {
+					return "~" + strings.TrimPrefix(common, home)
+				}
+			}
+			return common
+		}
+	}
+
+	return input
 }

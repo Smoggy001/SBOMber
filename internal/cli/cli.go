@@ -148,8 +148,12 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 				if scanFormat == "" {
 					scanFormat = formatCycloneDX
 				}
-				// Get absolute path for output folder
-				absPath, _ := filepath.Abs(scanPath)
+				// Resolve path (expand ~ and make absolute)
+				absPath, err := resolveScanRoot(scanPath)
+				if err != nil {
+					fmt.Fprintf(stderr, "Invalid path: %v\n", err)
+					continue
+				}
 				outputFolder := filepath.Join(absPath, sbom.OutputDirName)
 
 				// Show scanning message
