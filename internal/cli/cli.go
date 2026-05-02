@@ -137,24 +137,31 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer) int {
 
 func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	if stdin == os.Stdin && stdout == os.Stdout {
-		action, scanPath, scanFormat := runTUI()
-		switch action {
-		case "scan":
-			if scanPath == "" {
-				scanPath = "."
+		for {
+			action, scanPath, scanFormat := runTUI()
+			switch action {
+			case "scan":
+				if scanPath == "" {
+					scanPath = "."
+				}
+				if scanFormat == "" {
+					scanFormat = formatCycloneDX
+				}
+				runScan([]string{"--format", scanFormat, scanPath}, stdout, stderr)
+				fmt.Fprint(stdout, "\nPress Enter to continue...")
+				bufio.NewReader(os.Stdin).ReadBytes('\n')
+			case "version":
+				_, _ = fmt.Fprintf(stdout, "sbomber %s\n", version)
+				fmt.Fprint(stdout, "\nPress Enter to continue...")
+				bufio.NewReader(os.Stdin).ReadBytes('\n')
+			case "help":
+				printUsage(stdout)
+				fmt.Fprint(stdout, "\nPress Enter to continue...")
+				bufio.NewReader(os.Stdin).ReadBytes('\n')
+			case "exit", "":
+				fmt.Fprint(stdout, "Goodbye!\n")
+				return 0
 			}
-			if scanFormat == "" {
-				scanFormat = formatCycloneDX
-			}
-			return runScan([]string{"--format", scanFormat, scanPath}, stdout, stderr)
-		case "version":
-			_, _ = fmt.Fprintf(stdout, "sbomber %s\n", version)
-			return 0
-		case "help":
-			printUsage(stdout)
-			return 0
-		default:
-			return 0
 		}
 	}
 

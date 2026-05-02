@@ -400,5 +400,8 @@ func runTUI() (action string, scanPath string, scanFormat string) {
 		return "exit", "", ""
 	}
 
+	// Clear screen after TUI exits for clean transition
+	fmt.Print("\033[H\033[2J")
+
 	return final.selected, final.scanPath, final.scanFormat
 }
