@@ -1,99 +1,36 @@
 # SBOMber Development Status
 
-Last updated: 2026-03-26 AEDT
+Last updated: 2026-05-02
 
 ## Current State
 
-`SBOMber` is in active Phase 1 development.
+Sprint 2 complete. All core features implemented:
 
-Implemented so far:
+- Interactive TUI with loop mode (scan → results → back to menu)
+- Multi-repo Git scanning (recursive discovery)
+- Ecosystem detection + dependency extraction:
+  - npm (package.json + yarn.lock/package-lock.json)
+  - Python (requirements.txt)
+  - Maven (pom.xml)
+  - Ruby (Gemfile.lock)
+  - Go (go.mod)
+- SBOM export:
+  - CycloneDX 1.5 XML
+  - SPDX 2.3 tag-value
+- Grype vulnerability scanning (--include-vulnerabilities)
+- CI/CD non-interactive mode
 
-- recursive discovery of local Git repositories
-- ecosystem detection for:
-  - `npm`
-  - `python`
-  - `maven`
-  - `ruby`
-  - `go`
-- interactive CLI landing screen with:
-  - scan current folder
-  - scan custom folder
-  - version
-  - help
-- path handling for normal paths and `~/...`
-- export format selection in the CLI:
-  - `CycloneDX`
-  - `SPDX`
-  - `Both`
-- `npm` direct dependency parsing from `package.json`
-- `npm` transitive dependency parsing from `yarn.lock`
-- CLI summaries for npm repos showing:
-  - direct dependencies from `package.json`
-  - transitive dependencies from `yarn.lock`
-  - total known dependencies
-  - sample package names
+## Output Locations
 
-## Verified Working
+SBOMs are written to each scanned repository:
+- `{repo}/sbom-cyclonedx.xml`
+- `{repo}/sbom.spdx`
 
-Tested commands:
+## Next Up (Sprint 3)
 
-```bash
-make test
-make run
-make scan SCAN_PATH=/Users/trysudo/Documents/project/ICT_Project_A
-make scan SCAN_PATH=/Users/trysudo/Documents/project/ICT_Project_A/prettier
-make scan SCAN_PATH=/Users/trysudo/Documents/project/ICT_Project_A/prettier SCAN_ARGS='--format both'
-```
-
-Observed results:
-
-- `SBOMber` is detected as `[go]`
-- `prettier` is detected as `[npm]`
-- `prettier` currently reports:
-  - `146` direct dependencies from `package.json`
-  - `953` transitive dependencies from `yarn.lock`
-  - `1099` total known dependencies
-
-## Important Files
-
-- `cmd/sbomber/main.go`
-- `internal/cli/cli.go`
-- `internal/cli/cli_test.go`
-- `internal/discovery/discovery.go`
-- `internal/ecosystem/detect.go`
-- `internal/ecosystem/detect_test.go`
-- `internal/deps/model.go`
-- `internal/npm/parse.go`
-- `internal/npm/parse_test.go`
-- `internal/npm/yarn_lock.go`
-- `internal/npm/yarn_lock_test.go`
-- `Makefile`
-
-## What Is Not Done Yet
-
-Still missing:
-
-- actual SBOM file export
-- actual `CycloneDX` output generation
-- actual `SPDX` output generation
-- output directory selection
-- non-npm manifest parsing beyond ecosystem detection
-- Go dependency extraction from `go.mod` / `go.sum`
-- Python, Maven, Ruby dependency extraction
-- vulnerability scanning integration
-- reachability analysis research/prototype
-
-## Next Recommended Step
-
-The next sensible development step is:
-
-1. implement the first real SBOM exporter
-2. start with a minimal `CycloneDX` JSON file for npm repos
-3. write the file to disk based on the selected export format
-4. then repeat the same pattern for `SPDX`
-
-## Resume Prompt
-
-Next time, say:
-
-`Open SBOMber/DEVELOPMENT_STATUS.md and continue from the next recommended step.`
+- HTML vulnerability report per repository
+- EPSS scores per CVE
+- CISA KEV flags
+- GitHub Advisory remediation text
+- `--output` flag for custom output directory
+- `--severity-threshold` and `--fail-on-vuln` for CI gates

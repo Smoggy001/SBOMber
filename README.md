@@ -36,6 +36,7 @@ make build
 | Feature | Status |
 |---------|--------|
 | Interactive TUI | done |
+| Multi-repo Git scanning | done |
 | npm/yarn dependencies | done |
 | Python requirements.txt | done |
 | Maven pom.xml | done |
@@ -71,9 +72,18 @@ Navigate with arrow keys, select with Enter. After scan completes, press Enter t
 
 ### Output
 
-SBOMs are saved in the scanned repository:
-- `sbom-cyclonedx.xml` - CycloneDX 1.5 format
-- `sbom.spdx` - SPDX 2.3 format
+SBOMs are saved **inside each scanned repository**:
+
+```
+/path/to/repos/
+├── repo-a/
+│   ├── sbom-cyclonedx.xml    <- CycloneDX 1.5
+│   └── sbom.spdx             <- SPDX 2.3
+├── repo-b/
+│   ├── sbom-cyclonedx.xml
+│   └── sbom.spdx
+└── ...
+```
 
 ## Development
 
