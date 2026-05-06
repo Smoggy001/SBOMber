@@ -12,9 +12,10 @@ import (
 )
 
 type yarnEntry struct {
-	Selectors []string
-	Name      string
-	Version   string
+	Selectors    []string
+	Name         string
+	Version      string
+	Dependencies []string // names of dependencies
 }
 
 // EnrichFromYarnLock reads a Yarn Berry lockfile and appends transitive
@@ -33,15 +34,29 @@ func EnrichFromYarnLock(root string, summary deps.Summary) (deps.Summary, error)
 	}
 
 	directSelectors := make(map[string]struct{}, len(summary.Direct)*2)
-	for _, dependency := range summary.Direct {
+	directNames := make(map[string]int) // maps name to index in summary.Direct
+	for i, dependency := range summary.Direct {
 		directSelectors[dependency.Name+"@"+dependency.Version] = struct{}{}
 		directSelectors[dependency.Name+"@npm:"+dependency.Version] = struct{}{}
+		directNames[dependency.Name] = i
 	}
 
 	directLocked := make(map[string]struct{})
 	transitive := make(map[string]deps.Dependency)
+	entryByName := make(map[string]*yarnEntry) // for looking up dependencies
 
-	for _, entry := range entries {
+	// First pass: identify all entries
+	for i := range entries {
+		entry := &entries[i]
+		if entry.Name == "" || entry.Version == "" {
+			continue
+		}
+		entryByName[entry.Name] = entry
+	}
+
+	// Second pass: classify as direct or transitive
+	for i := range entries {
+		entry := &entries[i]
 		if entry.Name == "" || entry.Version == "" {
 			continue
 		}
@@ -58,6 +73,10 @@ func EnrichFromYarnLock(root string, summary deps.Summary) (deps.Summary, error)
 
 		if isDirect {
 			directLocked[key] = struct{}{}
+			// Update direct dependency with children
+			if idx, ok := directNames[entry.Name]; ok {
+				summary.Direct[idx].Children = entry.Dependencies
+			}
 			continue
 		}
 
@@ -66,10 +85,13 @@ func EnrichFromYarnLock(root string, summary deps.Summary) (deps.Summary, error)
 		}
 
 		transitive[key] = deps.Dependency{
-			Name:      entry.Name,
-			Version:   entry.Version,
-			Scope:     deps.Scope("transitive"),
-			Ecosystem: "npm",
+			Name:           entry.Name,
+			Version:        entry.Version,
+			Scope:          deps.Scope("transitive"),
+			Ecosystem:      "npm",
+			Children:       entry.Dependencies,
+			SourceFile:     "yarn.lock",
+			SourceLocation: path,
 		}
 	}
 
@@ -93,6 +115,7 @@ func parseYarnLock(file *os.File) ([]yarnEntry, error) {
 
 	entries := make([]yarnEntry, 0)
 	var current *yarnEntry
+	inDependencies := false
 
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -106,24 +129,45 @@ func parseYarnLock(file *os.File) ([]yarnEntry, error) {
 			key = cleanYarnValue(key)
 			if key == "__metadata" {
 				current = nil
+				inDependencies = false
 				continue
 			}
 
 			entry := yarnEntry{
-				Selectors: splitSelectors(key),
+				Selectors:    splitSelectors(key),
+				Dependencies: make([]string, 0),
 			}
 			entry.Name = selectorName(entry.Selectors)
 			entries = append(entries, entry)
 			current = &entries[len(entries)-1]
+			inDependencies = false
 		case current == nil:
 			continue
 		case strings.HasPrefix(line, "  version:"):
 			current.Version = cleanYarnValue(strings.TrimSpace(strings.TrimPrefix(line, "  version:")))
+			inDependencies = false
 		case strings.HasPrefix(line, "  resolution:"):
 			resolution := cleanYarnValue(strings.TrimSpace(strings.TrimPrefix(line, "  resolution:")))
 			if name := nameFromDescriptor(resolution); name != "" {
 				current.Name = name
 			}
+			inDependencies = false
+		case strings.HasPrefix(line, "  dependencies:"):
+			inDependencies = true
+		case strings.HasPrefix(line, "  peerDependencies:"), strings.HasPrefix(line, "  optionalDependencies:"):
+			inDependencies = false
+		case inDependencies && strings.HasPrefix(line, "    "):
+			// Parse dependency entry like "    lodash: ^4.17.21"
+			depLine := strings.TrimSpace(line)
+			if idx := strings.Index(depLine, ":"); idx > 0 {
+				depName := cleanYarnValue(depLine[:idx])
+				if depName != "" {
+					current.Dependencies = append(current.Dependencies, depName)
+				}
+			}
+		case strings.HasPrefix(line, "  ") && !strings.HasPrefix(line, "    "):
+			// Any other top-level property ends the dependencies section
+			inDependencies = false
 		}
 	}
 

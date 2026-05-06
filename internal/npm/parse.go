@@ -30,6 +30,10 @@ func ParsePackageJSON(root string) (deps.Summary, error) {
 		return deps.Summary{}, err
 	}
 
+	// Get relative path for source location
+	sourceFile := "package.json"
+	sourceLocation := path
+
 	summary := deps.Summary{
 		Direct: make([]deps.Dependency, 0),
 	}
@@ -47,10 +51,13 @@ func ParsePackageJSON(root string) (deps.Summary, error) {
 
 		for _, name := range names {
 			summary.Direct = append(summary.Direct, deps.Dependency{
-				Name:      name,
-				Version:   values[name],
-				Scope:     scope,
-				Ecosystem: "npm",
+				Name:           name,
+				Version:        values[name],
+				Scope:          scope,
+				Ecosystem:      "npm",
+				IsDirect:       true,
+				SourceFile:     sourceFile,
+				SourceLocation: sourceLocation,
 			})
 		}
 	}

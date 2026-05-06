@@ -26,6 +26,9 @@ func ParseGemfileLock(root string) (deps.Summary, error) {
 	}
 	defer func() { _ = f.Close() }()
 
+	sourceFile := "Gemfile.lock"
+	sourceLocation := path
+
 	summary := deps.Summary{
 		Direct: make([]deps.Dependency, 0),
 	}
@@ -88,10 +91,13 @@ func ParseGemfileLock(root string) (deps.Summary, error) {
 		}
 
 		summary.Direct = append(summary.Direct, deps.Dependency{
-			Name:      name,
-			Version:   version,
-			Scope:     deps.ScopeRuntime,
-			Ecosystem: "gem",
+			Name:           name,
+			Version:        version,
+			Scope:          deps.ScopeRuntime,
+			Ecosystem:      "rubygems",
+			IsDirect:       true,
+			SourceFile:     sourceFile,
+			SourceLocation: sourceLocation,
 		})
 	}
 

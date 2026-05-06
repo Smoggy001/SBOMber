@@ -28,6 +28,9 @@ func ParseGoMod(root string) (deps.Summary, error) {
 	}
 	defer func() { _ = f.Close() }()
 
+	sourceFile := "go.mod"
+	sourceLocation := path
+
 	summary := deps.Summary{
 		Direct:     make([]deps.Dependency, 0),
 		Transitive: make([]deps.Dependency, 0),
@@ -62,14 +65,17 @@ func ParseGoMod(root string) (deps.Summary, error) {
 			parts := strings.Fields(remainder)
 			if len(parts) >= 2 {
 				dep := deps.Dependency{
-					Name:      parts[0],
-					Version:   parts[1],
-					Scope:     deps.ScopeRuntime,
-					Ecosystem: "golang",
+					Name:           parts[0],
+					Version:        parts[1],
+					Scope:          deps.ScopeRuntime,
+					Ecosystem:      "golang",
+					SourceFile:     sourceFile,
+					SourceLocation: sourceLocation,
 				}
 				if isIndirect {
 					summary.Transitive = append(summary.Transitive, dep)
 				} else {
+					dep.IsDirect = true
 					summary.Direct = append(summary.Direct, dep)
 				}
 			}
@@ -100,14 +106,18 @@ func ParseGoMod(root string) (deps.Summary, error) {
 		}
 
 		dep := deps.Dependency{
-			Name:    parts[0],
-			Version: parts[1],
-			Scope:   deps.ScopeRuntime,
+			Name:           parts[0],
+			Version:        parts[1],
+			Scope:          deps.ScopeRuntime,
+			Ecosystem:      "golang",
+			SourceFile:     sourceFile,
+			SourceLocation: sourceLocation,
 		}
 
 		if isIndirect {
 			summary.Transitive = append(summary.Transitive, dep)
 		} else {
+			dep.IsDirect = true
 			summary.Direct = append(summary.Direct, dep)
 		}
 	}

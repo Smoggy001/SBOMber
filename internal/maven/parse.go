@@ -42,6 +42,9 @@ func ParsePOM(root string) (deps.Summary, error) {
 		Direct: make([]deps.Dependency, 0, len(pom.Dependencies.Dependency)),
 	}
 
+	sourceFile := "pom.xml"
+	sourceLocation := path
+
 	for _, dep := range pom.Dependencies.Dependency {
 		if dep.GroupID == "" || dep.ArtifactID == "" {
 			continue
@@ -49,14 +52,17 @@ func ParsePOM(root string) (deps.Summary, error) {
 
 		scope := deps.ScopeRuntime
 		if dep.Scope == "test" {
-			scope = deps.ScopeDev
+			scope = deps.ScopeTest
 		}
 
 		summary.Direct = append(summary.Direct, deps.Dependency{
-			Name:      dep.GroupID + ":" + dep.ArtifactID,
-			Version:   dep.Version,
-			Scope:     scope,
-			Ecosystem: "maven",
+			Name:           dep.GroupID + ":" + dep.ArtifactID,
+			Version:        dep.Version,
+			Scope:          scope,
+			Ecosystem:      "maven",
+			IsDirect:       true,
+			SourceFile:     sourceFile,
+			SourceLocation: sourceLocation,
 		})
 	}
 
