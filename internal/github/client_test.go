@@ -77,9 +77,9 @@ func TestParseRepoURL(t *testing.T) {
 }
 
 func TestNewClient(t *testing.T) {
-        t.Setenv("GITHUB_TOKEN", "")
-	
-        client := NewClient("")
+	t.Setenv("GITHUB_TOKEN", "")
+
+	client := NewClient("")
 	if client == nil {
 		t.Fatal("NewClient() returned nil")
 	}
