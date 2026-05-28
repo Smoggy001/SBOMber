@@ -67,10 +67,8 @@ func TestScanReportsDetectedEcosystems(t *testing.T) {
 		"[go]",
 		"prettier",
 		"[npm]",
-		"direct dependencies (package.json): 2",
-		"transitive dependencies: 2",
-		"total known dependencies: 4",
-		"sample packages: react, vitest",
+		"packages: 2 direct, 2 transitive",
+		"Scan complete: 2 repositories scanned",
 	} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected output to contain %q, got %q", expected, output)
