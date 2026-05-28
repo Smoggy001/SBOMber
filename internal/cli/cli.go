@@ -79,15 +79,12 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	root := "."
+	// Collect all roots - supports multiple paths
+	var roots []string
 	if fs.NArg() > 0 {
-		root = fs.Arg(0)
-	}
-
-	absoluteRoot, err := resolveScanRoot(root)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "resolve path: %v\n", err)
-		return 1
+		roots = fs.Args()
+	} else {
+		roots = []string{"."}
 	}
 
 	selectedFormat, err := normalizeExportFormat(*format)
@@ -96,39 +93,78 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 1
 	}
 
-	repos, err := discovery.FindGitRepositories(absoluteRoot)
-	if err != nil {
-		_, _ = fmt.Fprintf(stderr, "scan repositories: %v\n", err)
-		return 1
-	}
-
-	if len(repos) == 0 {
-		_, _ = fmt.Fprintf(stdout, "No repositories found under %s\n", absoluteRoot)
-		return 0
-	}
-
-	plural := "repositories"
-	if len(repos) == 1 {
-		plural = "repository"
-	}
-
 	_, _ = fmt.Fprintf(stdout, "Selected SBOM export format: %s\n", selectedFormat)
 	if *includeVulnerabilities {
 		if vulnerability.IsGrypeAvailable() {
 			_, _ = fmt.Fprintf(stdout, "Vulnerability scanning: enabled (Grype)\n")
-
 		} else {
 			_, _ = fmt.Fprintf(stderr, "WARNING: Vulnerability scanning requested but Grype not found in PATH\n")
 			_, _ = fmt.Fprintf(stderr, "Install Grype from: https://github.com/anchore/grype\n")
 		}
 	}
-	_, _ = fmt.Fprintf(stdout, "Found %d %s under %s\n", len(repos), plural, absoluteRoot)
-	for _, repo := range repos {
-		detection, err := ecosystem.Detect(repo.Path)
+
+	// Count total repos first to determine if we need batch mode
+	var allRepos []struct {
+		repo      discovery.Repository
+		detection ecosystem.Detection
+		rootPath  string
+	}
+
+	for _, root := range roots {
+		absoluteRoot, err := resolveScanRoot(root)
 		if err != nil {
-			_, _ = fmt.Fprintf(stderr, "detect ecosystem for %s: %v\n", repo.Path, err)
+			_, _ = fmt.Fprintf(stderr, "resolve path %s: %v\n", root, err)
+			continue
+		}
+
+		repos, err := discovery.FindGitRepositories(absoluteRoot)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "scan repositories under %s: %v\n", absoluteRoot, err)
+			continue
+		}
+
+		for _, repo := range repos {
+			detection, err := ecosystem.Detect(repo.Path)
+			if err != nil {
+				_, _ = fmt.Fprintf(stderr, "detect ecosystem for %s: %v\n", repo.Path, err)
+				continue
+			}
+			allRepos = append(allRepos, struct {
+				repo      discovery.Repository
+				detection ecosystem.Detection
+				rootPath  string
+			}{repo, detection, absoluteRoot})
+		}
+	}
+
+	if len(allRepos) == 0 {
+		_, _ = fmt.Fprintf(stdout, "No repositories found\n")
+		return 0
+	}
+
+	// Use batch mode if scanning multiple repos
+	var batchDir string
+	useBatchMode := len(allRepos) > 1
+
+	if useBatchMode {
+		// Create batch directory with scan folder name
+		scanName := filepath.Base(roots[0])
+		if len(roots) > 1 {
+			scanName = "multi-scan"
+		}
+		batchDir, err = sbom.GetBatchOutputDir(scanName)
+		if err != nil {
+			_, _ = fmt.Fprintf(stderr, "create batch output directory: %v\n", err)
 			return 1
 		}
+		_, _ = fmt.Fprintf(stdout, "\nBatch output folder: %s\n", batchDir)
+	}
+
+	_, _ = fmt.Fprintf(stdout, "\nFound %d repositories to scan\n", len(allRepos))
+
+	for _, item := range allRepos {
+		repo := item.repo
+		detection := item.detection
 
 		stack := "unknown"
 		if len(detection.Names) > 0 {
@@ -136,14 +172,22 @@ func runScan(args []string, stdout io.Writer, stderr io.Writer) int {
 			for _, name := range detection.Names {
 				names = append(names, string(name))
 			}
-
 			stack = strings.Join(names, ", ")
 		}
 
-		_, _ = fmt.Fprintf(stdout, "- %s  %s  [%s]\n", repo.Name, repo.Path, stack)
-		printDependencySummary(stdout, stderr, repo.Name, repo.Path, detection, selectedFormat, *includeVulnerabilities)
+		_, _ = fmt.Fprintf(stdout, "\n- %s  [%s]\n", repo.Name, stack)
+
+		if useBatchMode {
+			printDependencySummaryBatch(stdout, stderr, repo.Name, repo.Path, detection, selectedFormat, *includeVulnerabilities, batchDir)
+		} else {
+			printDependencySummary(stdout, stderr, repo.Name, repo.Path, detection, selectedFormat, *includeVulnerabilities)
+		}
 	}
-	_, _ = fmt.Fprintf(stdout, "\nScan complete: %d repositories scanned\n", len(repos))
+
+	_, _ = fmt.Fprintf(stdout, "\nScan complete: %d repositories scanned\n", len(allRepos))
+	if useBatchMode {
+		_, _ = fmt.Fprintf(stdout, "All reports saved to: %s\n", batchDir)
+	}
 	return 0
 }
 
@@ -740,23 +784,41 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 			result := runTUIFull()
 			switch result.Action {
 			case "scan":
-				scanPath := result.ScanPath
+				scanPaths := result.ScanPaths
 				scanFormat := result.ScanFormat
 				includeVulns := result.IncludeVulns
-				if scanPath == "" {
-					scanPath = "."
+
+				// Use single path if no multi-paths specified
+				if len(scanPaths) == 0 {
+					scanPath := result.ScanPath
+					if scanPath == "" {
+						scanPath = "."
+					}
+					scanPaths = []string{scanPath}
 				}
+
 				if scanFormat == "" {
 					scanFormat = formatCycloneDX
 				}
-				// Resolve path (expand ~ and make absolute)
-				absPath, err := resolveScanRoot(scanPath)
-				if err != nil {
-					fmt.Fprintf(stderr, "Invalid path: %v\n", err)
+
+				// Resolve all paths
+				var absPaths []string
+				for _, p := range scanPaths {
+					absPath, err := resolveScanRoot(p)
+					if err != nil {
+						fmt.Fprintf(stderr, "Invalid path %s: %v\n", p, err)
+						continue
+					}
+					absPaths = append(absPaths, absPath)
+				}
+
+				if len(absPaths) == 0 {
+					fmt.Fprintf(stderr, "No valid paths to scan\n")
 					continue
 				}
+
 				// Get central output folder in ~/.sbomber/reports/
-				outputFolder, err := sbom.GetOutputDir(absPath)
+				outputFolder, err := sbom.GetOutputDir(absPaths[0])
 				if err != nil {
 					fmt.Fprintf(stderr, "Failed to create output directory: %v\n", err)
 					continue
@@ -767,7 +829,14 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 				fmt.Println()
 				fmt.Println("  \033[1m\033[36mScanning...\033[0m")
 				fmt.Println()
-				fmt.Printf("  Path:   %s\n", absPath)
+				if len(absPaths) == 1 {
+					fmt.Printf("  Path:   %s\n", absPaths[0])
+				} else {
+					fmt.Printf("  Paths:  %d folders\n", len(absPaths))
+					for i, p := range absPaths {
+						fmt.Printf("    %d. %s\n", i+1, p)
+					}
+				}
 				fmt.Printf("  Format: %s\n", scanFormat)
 				if includeVulns {
 					fmt.Println("  Vulns:  enabled (Grype)")
@@ -780,7 +849,7 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 				if includeVulns {
 					args = append(args, "--include-vulnerabilities")
 				}
-				args = append(args, scanPath)
+				args = append(args, absPaths...)
 				runScan(args, &buf, &buf) // Capture both stdout and stderr
 
 				if quit := showResultsScreen(buf.String(), outputFolder); quit {
@@ -1017,7 +1086,7 @@ func printDependencySummary(stdout io.Writer, stderr io.Writer, repoName, repoPa
 			if spdxPath != "" {
 				scanPath = "sbom:" + spdxPath
 			}
-			generateVulnReport(stdout, stderr, scanPath, outputDir, repoName)
+			generateVulnReport(stdout, stderr, scanPath, outputDir, repoName, &summary)
 		}
 	}
 
@@ -1034,13 +1103,7 @@ func printDependencySummary(stdout io.Writer, stderr io.Writer, repoName, repoPa
 	}
 	_, _ = fmt.Fprintln(stdout)
 
-	sourceLabel := "package.json"
-	if containsEcosystem(detection.Names, ecosystem.Python) {
-		sourceLabel = "requirements.txt"
-	}
-	if containsEcosystem(detection.Names, ecosystem.NPM) && containsEcosystem(detection.Names, ecosystem.Python) {
-		sourceLabel = "package.json + requirements.txt"
-	}
+	sourceLabel := buildSourceLabel(detection.Names)
 
 	_, _ = fmt.Fprintf(stdout, "  direct dependencies (%s): %d", sourceLabel, summary.Count())
 
@@ -1079,6 +1142,55 @@ func printDependencySummary(stdout io.Writer, stderr io.Writer, repoName, repoPa
 	}
 
 	_, _ = fmt.Fprintf(stdout, "  sample packages: %s\n", strings.Join(preview, ", "))
+}
+
+func printDependencySummaryBatch(stdout io.Writer, stderr io.Writer, repoName, repoPath string, detection ecosystem.Detection, selectedFormat string, includeVulnerabilities bool, batchDir string) {
+	summary, err := buildRepoDependencySummary(repoPath, detection)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "  read dependencies for %s: %v\n", repoPath, err)
+		return
+	}
+
+	// Create repo subdirectory within batch folder
+	repoOutputDir, err := sbom.GetRepoOutputDir(batchDir, repoName)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "  create output dir for %s: %v\n", repoName, err)
+		return
+	}
+
+	savedPaths, err := sbom.SaveSBOMToDir(repoOutputDir, repoName, summary, selectedFormat)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "  save SBOM for %s: %v\n", repoPath, err)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "  output: %s/\n", filepath.Base(repoOutputDir))
+		var spdxPath string
+		for _, path := range savedPaths {
+			_, _ = fmt.Fprintf(stdout, "    - %s\n", filepath.Base(path))
+			if strings.HasSuffix(path, "sbom.spdx") {
+				spdxPath = path
+			}
+		}
+		if includeVulnerabilities {
+			scanPath := repoPath
+			if spdxPath != "" {
+				scanPath = "sbom:" + spdxPath
+			}
+			generateVulnReport(stdout, stderr, scanPath, repoOutputDir, repoName, &summary)
+		}
+	}
+
+	totalDirect := summary.Count()
+	totalTransitive := summary.TransitiveCount()
+
+	if totalDirect == 0 && totalTransitive == 0 {
+		return
+	}
+
+	_, _ = fmt.Fprintf(stdout, "  packages: %d direct", totalDirect)
+	if totalTransitive > 0 {
+		_, _ = fmt.Fprintf(stdout, ", %d transitive", totalTransitive)
+	}
+	_, _ = fmt.Fprintln(stdout)
 }
 
 func buildRepoDependencySummary(repoPath string, detection ecosystem.Detection) (deps.Summary, error) {
@@ -1137,7 +1249,7 @@ func buildRepoDependencySummary(repoPath string, detection ecosystem.Detection) 
 	return summary, nil
 }
 
-func generateVulnReport(stdout io.Writer, stderr io.Writer, scanPath, outputDir, repoName string) {
+func generateVulnReport(stdout io.Writer, stderr io.Writer, scanPath, outputDir, repoName string, summary *deps.Summary) {
 	if !vulnerability.IsGrypeAvailable() {
 		_, _ = fmt.Fprintf(stderr, "  note: grype not available, skipping vulnerability scan\n")
 		return
@@ -1161,8 +1273,8 @@ func generateVulnReport(stdout io.Writer, stderr io.Writer, scanPath, outputDir,
 		}
 	}
 
-	// Generate HTML report
-	reportPath, err := vulnerability.GenerateHTMLReport(outputDir, repoName, vulnResults)
+	// Generate HTML report with dependencies
+	reportPath, err := vulnerability.GenerateHTMLReportWithDeps(outputDir, repoName, vulnResults, summary)
 	if err != nil {
 		_, _ = fmt.Fprintf(stderr, "  failed to generate HTML report: %v\n", err)
 		return
@@ -1178,6 +1290,29 @@ func containsEcosystem(names []ecosystem.Name, candidate ecosystem.Name) bool {
 	}
 
 	return false
+}
+
+func buildSourceLabel(names []ecosystem.Name) string {
+	labelMap := map[ecosystem.Name]string{
+		ecosystem.NPM:    "package.json",
+		ecosystem.Python: "requirements.txt",
+		ecosystem.Maven:  "pom.xml",
+		ecosystem.Ruby:   "Gemfile",
+		ecosystem.Go:     "go.mod",
+	}
+
+	labels := make([]string, 0, len(names))
+	for _, name := range names {
+		if label, ok := labelMap[name]; ok {
+			labels = append(labels, label)
+		}
+	}
+
+	if len(labels) == 0 {
+		return "manifest"
+	}
+
+	return strings.Join(labels, " + ")
 }
 
 func resolveScanRoot(root string) (string, error) {
@@ -1221,7 +1356,7 @@ func printUsage(w io.Writer) {
 
 Usage:
   sbomber
-  sbomber scan [path] [--format cyclonedx|spdx|both] [--include-vulnerabilities]
+  sbomber scan [path...] [--format cyclonedx|spdx|both] [--include-vulnerabilities]
   sbomber github [--health] [--include-vulnerabilities] [--format FORMAT] <repo-url>...
   sbomber trace <path> [package-name] [flags]
   sbomber verify <ground-truth-sbom> <generated-sbom> [--json]
@@ -1248,6 +1383,7 @@ Verify Flags:
 Examples:
   sbomber
   sbomber scan .
+  sbomber scan ./repo1 ./repo2 ./repo3 --format cyclonedx
   sbomber scan ../workspace --format both --include-vulnerabilities
   sbomber github https://github.com/expressjs/express
   sbomber github --health --include-vulnerabilities https://github.com/lodash/lodash

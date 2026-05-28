@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 )
 
 const (
@@ -46,6 +47,49 @@ func GetSBOMberHome() (string, error) {
 	}
 
 	return sbomberHome, nil
+}
+
+// GetBatchOutputDir creates a timestamped directory for batch scans.
+// Output is stored at ~/.sbomber/reports/<scan-name>_<timestamp>/
+// Returns the batch directory path.
+func GetBatchOutputDir(scanName string) (string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("get home directory: %w", err)
+	}
+
+	safeName := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(scanName, "_")
+	if safeName == "" {
+		safeName = "batch-scan"
+	}
+
+	timestamp := strings.ReplaceAll(strings.ReplaceAll(
+		strings.Split(fmt.Sprintf("%s", time.Now().Format(time.RFC3339)), "T")[0]+
+			"_"+strings.Split(fmt.Sprintf("%s", time.Now().Format(time.RFC3339)), "T")[1][:8],
+		":", "-"), "Z", "")
+
+	batchDir := filepath.Join(home, SBOMberDir, ReportsDir, fmt.Sprintf("%s_%s", strings.ToLower(safeName), timestamp))
+
+	if err := os.MkdirAll(batchDir, 0o755); err != nil {
+		return "", fmt.Errorf("create batch output directory: %w", err)
+	}
+
+	return batchDir, nil
+}
+
+// GetRepoOutputDir creates a subdirectory for a specific repo within a batch scan.
+func GetRepoOutputDir(batchDir, repoName string) (string, error) {
+	safeName := regexp.MustCompile(`[^a-zA-Z0-9_-]`).ReplaceAllString(repoName, "_")
+	if safeName == "" {
+		safeName = "repo"
+	}
+
+	repoDir := filepath.Join(batchDir, strings.ToLower(safeName))
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
+		return "", fmt.Errorf("create repo output directory: %w", err)
+	}
+
+	return repoDir, nil
 }
 
 // sanitizeProjectName creates a safe directory name from a project path
