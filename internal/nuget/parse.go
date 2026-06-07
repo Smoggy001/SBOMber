@@ -10,7 +10,7 @@ import (
 )
 
 type nugetLock struct {
-	Version      int                                    `json:"version"`
+	Version      int                                   `json:"version"`
 	Dependencies map[string]map[string]nugetDependency `json:"dependencies"`
 }
 

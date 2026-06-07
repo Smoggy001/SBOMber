@@ -368,7 +368,7 @@ func (r *Resolver) resolveMavenRepo(name string) (string, error) {
 }
 
 var (
-	scmURLPattern = regexp.MustCompile(`(?s)<scm>.*?<url>([^<]+)</url>`)
+	scmURLPattern  = regexp.MustCompile(`(?s)<scm>.*?<url>([^<]+)</url>`)
 	scmConnPattern = regexp.MustCompile(`(?s)<scm>.*?<connection>([^<]+)</connection>`)
 )
 

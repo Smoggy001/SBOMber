@@ -71,27 +71,27 @@ type cycloneDXProperty struct {
 // CycloneDX JSON structures
 
 type cycloneDXJSONBom struct {
-	BOMFormat   string                  `json:"bomFormat"`
-	SpecVersion string                  `json:"specVersion"`
-	Version     int                     `json:"version"`
-	Metadata    cycloneDXJSONMetadata   `json:"metadata"`
-	Components  []cycloneDXJSONComponent `json:"components"`
-	Dependencies []cycloneDXJSONDep     `json:"dependencies"`
+	BOMFormat    string                   `json:"bomFormat"`
+	SpecVersion  string                   `json:"specVersion"`
+	Version      int                      `json:"version"`
+	Metadata     cycloneDXJSONMetadata    `json:"metadata"`
+	Components   []cycloneDXJSONComponent `json:"components"`
+	Dependencies []cycloneDXJSONDep       `json:"dependencies"`
 }
 
 type cycloneDXJSONMetadata struct {
-	Timestamp string               `json:"timestamp"`
+	Timestamp string                 `json:"timestamp"`
 	Component cycloneDXJSONComponent `json:"component"`
 }
 
 type cycloneDXJSONComponent struct {
-	Type       string                   `json:"type"`
-	BOMRef     string                   `json:"bom-ref,omitempty"`
-	Name       string                   `json:"name"`
-	Version    string                   `json:"version,omitempty"`
-	Scope      string                   `json:"scope,omitempty"`
-	Purl       string                   `json:"purl,omitempty"`
-	Properties []cycloneDXJSONProperty  `json:"properties,omitempty"`
+	Type       string                  `json:"type"`
+	BOMRef     string                  `json:"bom-ref,omitempty"`
+	Name       string                  `json:"name"`
+	Version    string                  `json:"version,omitempty"`
+	Scope      string                  `json:"scope,omitempty"`
+	Purl       string                  `json:"purl,omitempty"`
+	Properties []cycloneDXJSONProperty `json:"properties,omitempty"`
 }
 
 type cycloneDXJSONProperty struct {
@@ -100,7 +100,7 @@ type cycloneDXJSONProperty struct {
 }
 
 type cycloneDXJSONDep struct {
-	Ref      string   `json:"ref"`
+	Ref       string   `json:"ref"`
 	DependsOn []string `json:"dependsOn,omitempty"`
 }
 

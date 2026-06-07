@@ -21,12 +21,12 @@ const (
 
 // Client provides access to GitHub API with rate limiting and caching.
 type Client struct {
-	httpClient     *http.Client
-	token          string
-	rateLimit      RateLimit
-	rateLimitSeen  bool // true once we have received at least one X-RateLimit header
-	rateMu         sync.RWMutex
-	cache          *cache
+	httpClient    *http.Client
+	token         string
+	rateLimit     RateLimit
+	rateLimitSeen bool // true once we have received at least one X-RateLimit header
+	rateMu        sync.RWMutex
+	cache         *cache
 }
 
 // cache stores API responses to avoid redundant requests.

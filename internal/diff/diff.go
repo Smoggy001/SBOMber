@@ -9,21 +9,21 @@ import (
 
 // Change categorizes how a component changed between two SBOMs.
 type Change struct {
-	Name        string
-	OldVersion  string
-	NewVersion  string
-	Kind        string // added, removed, upgraded, downgraded, unchanged
+	Name       string
+	OldVersion string
+	NewVersion string
+	Kind       string // added, removed, upgraded, downgraded, unchanged
 }
 
 // Result holds the full diff between two SBOMs.
 type Result struct {
-	OldPath   string
-	NewPath   string
-	Added     []Change
-	Removed   []Change
-	Upgraded  []Change
+	OldPath    string
+	NewPath    string
+	Added      []Change
+	Removed    []Change
+	Upgraded   []Change
 	Downgraded []Change
-	Unchanged int
+	Unchanged  int
 }
 
 // DiffFiles compares two SBOM files and returns the diff result.
