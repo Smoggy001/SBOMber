@@ -52,5 +52,5 @@ func TestSaveSBOMCreatesFiles(t *testing.T) {
 	}
 
 	// Cleanup test output
-	_ = os.RemoveAll(outputDir)
+	os.RemoveAll(outputDir)
 }

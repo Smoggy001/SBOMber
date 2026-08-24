@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"regexp"
 	"strings"
 	"sync"
@@ -304,8 +305,87 @@ func (r *Resolver) resolveRubyRepo(name string) (string, error) {
 	return "", fmt.Errorf("no GitHub repository found")
 }
 
+type mavenSearchResponse struct {
+	Response struct {
+		Docs []struct {
+			LatestVersion string `json:"latestVersion"`
+		} `json:"docs"`
+	} `json:"response"`
+}
+
 func (r *Resolver) resolveMavenRepo(name string) (string, error) {
-	return "", fmt.Errorf("maven repo resolution not implemented")
+	// Maven dep names are "groupId:artifactId"
+	parts := strings.SplitN(name, ":", 2)
+	if len(parts) != 2 {
+		return "", fmt.Errorf("expected groupId:artifactId format, got: %s", name)
+	}
+	groupID, artifactID := parts[0], parts[1]
+
+	// Find the latest version via Maven Central search
+	searchURL := fmt.Sprintf(
+		"https://search.maven.org/solrsearch/select?q=g:%s+AND+a:%s&rows=1&wt=json",
+		url.QueryEscape(groupID), url.QueryEscape(artifactID),
+	)
+	resp, err := r.httpClient.Get(searchURL)
+	if err != nil {
+		return "", fmt.Errorf("maven search request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	var searchResp mavenSearchResponse
+	if err := json.Unmarshal(body, &searchResp); err != nil || len(searchResp.Response.Docs) == 0 {
+		return "", fmt.Errorf("no Maven Central result for %s", name)
+	}
+	version := searchResp.Response.Docs[0].LatestVersion
+
+	// Fetch POM and extract SCM URL
+	groupPath := strings.ReplaceAll(groupID, ".", "/")
+	pomURL := fmt.Sprintf(
+		"https://repo1.maven.org/maven2/%s/%s/%s/%s-%s.pom",
+		groupPath, artifactID, version, artifactID, version,
+	)
+	pomResp, err := r.httpClient.Get(pomURL)
+	if err != nil {
+		return "", fmt.Errorf("pom fetch failed: %w", err)
+	}
+	defer pomResp.Body.Close()
+
+	pomBody, err := io.ReadAll(pomResp.Body)
+	if err != nil {
+		return "", err
+	}
+
+	scmURL := extractPOMScmURL(string(pomBody))
+	if scmURL == "" {
+		return "", fmt.Errorf("no SCM URL found in POM for %s", name)
+	}
+	return normalizeGitURL(scmURL), nil
+}
+
+var (
+	scmURLPattern  = regexp.MustCompile(`(?s)<scm>.*?<url>([^<]+)</url>`)
+	scmConnPattern = regexp.MustCompile(`(?s)<scm>.*?<connection>([^<]+)</connection>`)
+)
+
+func extractPOMScmURL(pom string) string {
+	if m := scmURLPattern.FindStringSubmatch(pom); len(m) > 1 {
+		u := strings.TrimSpace(m[1])
+		if strings.Contains(u, "github.com") {
+			return u
+		}
+	}
+	if m := scmConnPattern.FindStringSubmatch(pom); len(m) > 1 {
+		u := strings.TrimSpace(m[1])
+		if strings.Contains(u, "github.com") {
+			return u
+		}
+	}
+	return ""
 }
 
 var gitURLPattern = regexp.MustCompile(`github\.com[:/]([^/]+)/([^/\.]+)`)

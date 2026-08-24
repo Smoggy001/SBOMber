@@ -1,8 +1,16 @@
 {
-  "name": "npm-basic",
+  "name": "test-vuln",
   "version": "1.0.0",
-  "description": "Vulnerable npm fixture for SBOMber testing",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
   "dependencies": {
-    "lodash": "4.17.15"
+    "lodash": "^4.17.15"
   }
 }

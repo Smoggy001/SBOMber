@@ -21,11 +21,12 @@ const (
 
 // Client provides access to GitHub API with rate limiting and caching.
 type Client struct {
-	httpClient *http.Client
-	token      string
-	rateLimit  RateLimit
-	rateMu     sync.RWMutex
-	cache      *cache
+	httpClient    *http.Client
+	token         string
+	rateLimit     RateLimit
+	rateLimitSeen bool // true once we have received at least one X-RateLimit header
+	rateMu        sync.RWMutex
+	cache         *cache
 }
 
 // cache stores API responses to avoid redundant requests.
@@ -391,10 +392,9 @@ func calculateRiskLevel(m *HealthMetrics) string {
 
 func (c *Client) doRequest(method, endpoint string) ([]byte, error) {
 	c.rateMu.RLock()
-	if c.rateLimit.Remaining == 0 && time.Now().Before(c.rateLimit.Reset) {
+	if c.rateLimitSeen && c.rateLimit.Remaining == 0 && time.Now().Before(c.rateLimit.Reset) {
 		c.rateMu.RUnlock()
-		waitTime := time.Until(c.rateLimit.Reset)
-		return nil, fmt.Errorf("rate limit exceeded, resets in %v", waitTime)
+		return nil, fmt.Errorf("rate limit exceeded, resets in %v", time.Until(c.rateLimit.Reset))
 	}
 	c.rateMu.RUnlock()
 
@@ -417,6 +417,27 @@ func (c *Client) doRequest(method, endpoint string) ([]byte, error) {
 
 	c.updateRateLimit(resp.Header)
 
+	if resp.StatusCode == 401 {
+		// Invalid/expired token — retry without auth so public repos still work.
+		if c.token != "" {
+			req2, err2 := http.NewRequest(method, endpoint, nil)
+			if err2 != nil {
+				return nil, fmt.Errorf("authentication failed (check GITHUB_TOKEN): %s", endpoint)
+			}
+			req2.Header.Set("Accept", "application/vnd.github.v3+json")
+			req2.Header.Set("User-Agent", "SBOMber")
+			resp2, err2 := c.httpClient.Do(req2)
+			if err2 != nil {
+				return nil, fmt.Errorf("authentication failed and unauthenticated retry failed: %w", err2)
+			}
+			defer resp2.Body.Close()
+			c.updateRateLimit(resp2.Header)
+			if resp2.StatusCode == 200 {
+				return io.ReadAll(resp2.Body)
+			}
+		}
+		return nil, fmt.Errorf("authentication failed (GITHUB_TOKEN is invalid or expired): %s", endpoint)
+	}
 	if resp.StatusCode == 404 {
 		return nil, fmt.Errorf("not found: %s", endpoint)
 	}
@@ -436,6 +457,7 @@ func (c *Client) updateRateLimit(headers http.Header) {
 
 	if v := headers.Get("X-RateLimit-Limit"); v != "" {
 		c.rateLimit.Limit, _ = strconv.Atoi(v)
+		c.rateLimitSeen = true
 	}
 	if v := headers.Get("X-RateLimit-Remaining"); v != "" {
 		c.rateLimit.Remaining, _ = strconv.Atoi(v)

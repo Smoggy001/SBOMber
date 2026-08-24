@@ -1,32 +1,5 @@
-.DS_Store
-.cache/
 bin/
-dist/
-coverage.out
 *.exe
-.claude/
-CLAUDE.md
-testingrepos.md
-sbom-cyclonedx.xml
-sbom-cyclonedx.json
-sbom.spdx
-sbom.spdx.json
-sbomber-output/
-sbomber
-
-# Sensitive files
-.env
-.env.*
-*.pem
-*.key
-config.local.json
-credentials.json
-secrets.json
-
-# Test output
-*.tmp
-/tmp/
-
-# Generated reports
-vulnerability-report.html
-*-report.html
+*.test
+*.out
+.sbomber/

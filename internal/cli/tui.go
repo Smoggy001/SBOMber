@@ -74,7 +74,7 @@ const (
 	viewGitHubFormat
 	viewGitHubHealth
 	viewGitHubVulns
-	viewMultiPathInput
+	viewGitHubStatus
 )
 
 // Menu item
@@ -93,7 +93,6 @@ type model struct {
 	healthOptions []menuItem
 	selected      string
 	scanPath      string
-	scanPaths     []string
 	scanFormat    string
 	includeVulns  bool
 	pathInput     string
@@ -111,7 +110,6 @@ func newModel() model {
 		items: []menuItem{
 			{label: "Scan current folder", desc: "Scan repos in the current directory"},
 			{label: "Scan custom folder", desc: "Choose a folder to scan"},
-			{label: "Scan multiple folders", desc: "Scan multiple local repositories"},
 			{label: "Scan GitHub repos", desc: "Scan remote GitHub repositories"},
 			{label: "GitHub API status", desc: "Check rate limits and token"},
 			{label: "Open reports folder", desc: "Open ~/.sbomber/reports"},
@@ -163,8 +161,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateGitHubHealth(msg)
 		case viewGitHubVulns:
 			return m.updateGitHubVulns(msg)
-		case viewMultiPathInput:
-			return m.updateMultiPathInput(msg)
+		case viewGitHubStatus:
+			return m.updateGitHubStatus(msg)
 		}
 	}
 	return m, nil
@@ -184,18 +182,12 @@ func (m model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch m.cursor {
 		case 0: // Scan current folder
 			m.scanPath = "."
-			m.scanPaths = nil
 			m.state = viewFormat
 			m.cursor = 0
 		case 1: // Scan custom folder
 			m.state = viewPathInput
 			m.pathInput = ""
-			m.scanPaths = nil
-		case 2: // Scan multiple folders
-			m.state = viewMultiPathInput
-			m.pathInput = ""
-			m.scanPaths = nil
-		case 3: // Scan GitHub repos
+		case 2: // Scan GitHub repos
 			m.githubToken = getGitHubToken()
 			if m.githubToken == "" {
 				m.state = viewGitHubToken
@@ -204,19 +196,19 @@ func (m model) updateMenu(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.state = viewGitHubURLs
 			}
 			m.githubURLs = ""
-		case 4: // GitHub API status
-			m.selected = "github-status"
-			m.state = viewDone
-		case 5: // Open reports folder
+		case 3: // GitHub API status
+			m.state = viewGitHubStatus
+			m.cursor = 0
+		case 4: // Open reports folder
 			m.selected = "open-reports"
 			m.state = viewDone
-		case 6: // Version
+		case 5: // Version
 			m.selected = "version"
 			m.state = viewDone
-		case 7: // Help
+		case 6: // Help
 			m.selected = "help"
 			m.state = viewDone
-		case 8: // Exit
+		case 7: // Exit
 			m.quitting = true
 			return m, tea.Quit
 		}
@@ -299,42 +291,6 @@ func (m model) updatePathInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case tea.KeyEsc:
 		m.state = viewMenu
 		m.cursor = 0
-	case tea.KeyCtrlC:
-		m.quitting = true
-		return m, tea.Quit
-	case tea.KeyTab:
-		m.pathInput = expandPathWithTab(m.pathInput)
-	case tea.KeySpace:
-		m.pathInput += " "
-	case tea.KeyRunes:
-		m.pathInput += string(msg.Runes)
-	}
-	return m, nil
-}
-
-func (m model) updateMultiPathInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch msg.Type {
-	case tea.KeyEnter:
-		if m.pathInput != "" {
-			// Add current path to list
-			m.scanPaths = append(m.scanPaths, strings.TrimSpace(m.pathInput))
-			m.pathInput = ""
-		} else if len(m.scanPaths) > 0 {
-			// Empty input with paths = proceed to format selection
-			m.state = viewFormat
-			m.cursor = 0
-		}
-	case tea.KeyBackspace:
-		if len(m.pathInput) > 0 {
-			m.pathInput = m.pathInput[:len(m.pathInput)-1]
-		} else if len(m.scanPaths) > 0 {
-			// Remove last path if input is empty
-			m.scanPaths = m.scanPaths[:len(m.scanPaths)-1]
-		}
-	case tea.KeyEsc:
-		m.state = viewMenu
-		m.cursor = 2
-		m.scanPaths = nil
 	case tea.KeyCtrlC:
 		m.quitting = true
 		return m, tea.Quit
@@ -510,8 +466,6 @@ func (m model) View() string {
 		b.WriteString(m.renderVulnScan())
 	case viewPathInput:
 		b.WriteString(m.renderPathInput())
-	case viewMultiPathInput:
-		b.WriteString(m.renderMultiPathInput())
 	case viewDone:
 		b.WriteString(m.renderDone())
 	case viewGitHubToken:
@@ -524,6 +478,8 @@ func (m model) View() string {
 		b.WriteString(m.renderGitHubHealth())
 	case viewGitHubVulns:
 		b.WriteString(m.renderGitHubVulns())
+	case viewGitHubStatus:
+		b.WriteString(m.renderGitHubStatusView())
 	}
 
 	return b.String()
@@ -650,40 +606,6 @@ func (m model) renderPathInput() string {
 
 	b.WriteString("  " + prompt + input + cursor + "\n\n")
 	b.WriteString(dimStyle.MarginLeft(2).Render("  enter confirm  esc back") + "\n")
-
-	return b.String()
-}
-
-func (m model) renderMultiPathInput() string {
-	var b strings.Builder
-
-	header := titleStyle.MarginLeft(2).Render("  SCAN MULTIPLE FOLDERS")
-	b.WriteString(header + "\n\n")
-
-	b.WriteString(dimStyle.MarginLeft(2).Render("  Enter paths one at a time. Press Enter to add each path.") + "\n")
-	b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter on empty input when done to continue.") + "\n")
-	b.WriteString(dimStyle.MarginLeft(2).Render("  Backspace on empty input removes the last path.") + "\n\n")
-
-	// Show added paths
-	if len(m.scanPaths) > 0 {
-		b.WriteString(accentStyle.MarginLeft(2).Render(fmt.Sprintf("  Added paths (%d):", len(m.scanPaths))) + "\n")
-		for i, p := range m.scanPaths {
-			b.WriteString(successStyle.MarginLeft(2).Render(fmt.Sprintf("    %d. %s", i+1, p)) + "\n")
-		}
-		b.WriteString("\n")
-	}
-
-	prompt := inputStyle.Render("  Path: ")
-	cursor := accentStyle.Render("█")
-	input := accentStyle.Render(m.pathInput)
-
-	b.WriteString("  " + prompt + input + cursor + "\n\n")
-
-	if len(m.scanPaths) > 0 {
-		b.WriteString(dimStyle.MarginLeft(2).Render("  enter (empty) continue  tab autocomplete  esc back") + "\n")
-	} else {
-		b.WriteString(dimStyle.MarginLeft(2).Render("  enter add path  tab autocomplete  esc back") + "\n")
-	}
 
 	return b.String()
 }
@@ -843,6 +765,112 @@ func (m model) renderGitHubToken() string {
 	return b.String()
 }
 
+func (m model) updateGitHubStatus(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	token := getGitHubToken()
+	maxItems := 2 // "Set up token", "Back"
+	if token != "" {
+		maxItems = 3 // "Remove token", "Replace token", "Back"
+	}
+
+	switch msg.String() {
+	case "up", "k":
+		if m.cursor > 0 {
+			m.cursor--
+		}
+	case "down", "j":
+		if m.cursor < maxItems-1 {
+			m.cursor++
+		}
+	case "enter":
+		if token != "" {
+			switch m.cursor {
+			case 0: // Remove token
+				removeGitHubToken()
+				m.githubToken = ""
+				m.tokenSaved = false
+				m.cursor = 0
+			case 1: // Replace token
+				m.githubToken = ""
+				m.tokenSaved = false
+				m.state = viewGitHubToken
+				m.cursor = 0
+			case 2: // Back
+				m.state = viewMenu
+				m.cursor = 3
+			}
+		} else {
+			switch m.cursor {
+			case 0: // Set up token
+				m.githubToken = ""
+				m.state = viewGitHubToken
+				m.cursor = 0
+			case 1: // Back
+				m.state = viewMenu
+				m.cursor = 3
+			}
+		}
+	case "esc":
+		m.state = viewMenu
+		m.cursor = 3
+	case "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m model) renderGitHubStatusView() string {
+	var b strings.Builder
+
+	b.WriteString(titleStyle.MarginLeft(2).Render("  GITHUB API STATUS") + "\n\n")
+
+	token := getGitHubToken()
+
+	if token == "" {
+		b.WriteString(dimStyle.MarginLeft(2).Render("  Token: ") +
+			lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).Render("Not configured") + "\n")
+		b.WriteString(dimStyle.MarginLeft(2).Render("  Rate limit: 60 requests/hour (unauthenticated)") + "\n\n")
+
+		actions := []string{"Set up token", "Back"}
+		for i, action := range actions {
+			if m.cursor == i {
+				b.WriteString(selectedStyle.Render("  ▸ "+action) + "\n")
+			} else {
+				b.WriteString(unselectedStyle.Render("    "+action) + "\n")
+			}
+		}
+	} else {
+		b.WriteString(dimStyle.MarginLeft(2).Render("  Token: ") + successStyle.Render("Configured ✓") + "\n\n")
+
+		status := fetchGitHubRateLimit(token)
+		b.WriteString(status)
+		b.WriteString("\n")
+
+		actions := []string{"Remove token", "Replace token", "Back"}
+		for i, action := range actions {
+			if m.cursor == i {
+				label := selectedStyle.Render("  ▸ " + action)
+				if action == "Remove token" {
+					label = lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).Bold(true).Render("  ▸ " + action)
+				}
+				b.WriteString(label + "\n")
+			} else {
+				b.WriteString(unselectedStyle.Render("    "+action) + "\n")
+			}
+		}
+	}
+
+	b.WriteString("\n" + dimStyle.MarginLeft(2).Render("  ↑↓ navigate  enter select  esc back") + "\n")
+
+	return b.String()
+}
+
+// removeGitHubToken clears the saved token from both the config file and env.
+func removeGitHubToken() {
+	os.Setenv("GITHUB_TOKEN", "")
+	saveGitHubToken("")
+}
+
 func (m model) renderGitHubURLs() string {
 	var b strings.Builder
 
@@ -962,7 +990,6 @@ func (m model) renderGitHubVulns() string {
 type TUIResult struct {
 	Action        string
 	ScanPath      string
-	ScanPaths     []string
 	ScanFormat    string
 	IncludeVulns  bool
 	GitHubURLs    string
@@ -997,7 +1024,6 @@ func runTUIFull() TUIResult {
 	return TUIResult{
 		Action:        final.selected,
 		ScanPath:      final.scanPath,
-		ScanPaths:     final.scanPaths,
 		ScanFormat:    final.scanFormat,
 		IncludeVulns:  final.includeVulns,
 		GitHubURLs:    final.githubURLs,

@@ -10,11 +10,14 @@ import (
 type Name string
 
 const (
-	NPM    Name = "npm"
-	Python Name = "python"
-	Maven  Name = "maven"
-	Ruby   Name = "ruby"
-	Go     Name = "go"
+	NPM      Name = "npm"
+	Python   Name = "python"
+	Maven    Name = "maven"
+	Ruby     Name = "ruby"
+	Go       Name = "go"
+	Cargo    Name = "cargo"
+	Composer Name = "composer"
+	NuGet    Name = "nuget"
 )
 
 // Detection reports the ecosystems detected for a repository and the files that
@@ -50,6 +53,17 @@ var markers = map[Name][]string{
 	Go: {
 		"go.mod",
 		"go.sum",
+	},
+	Cargo: {
+		"Cargo.lock",
+		"Cargo.toml",
+	},
+	Composer: {
+		"composer.lock",
+		"composer.json",
+	},
+	NuGet: {
+		"packages.lock.json",
 	},
 }
 

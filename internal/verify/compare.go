@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 )
 
 // Component represents a dependency in an SBOM
@@ -414,6 +415,60 @@ func calculateGrade(f1 float64) string {
 		return "D  (Poor)"
 	default:
 		return "F  (Failing)"
+	}
+}
+
+// SaveNote writes a compact scorecard text file to notePath.
+// The note contains the four key metrics and overall grade — suitable for
+// committing alongside the SBOM or attaching to a CI artifact.
+func (r *ComparisonResult) SaveNote(notePath, groundTruthPath, generatedPath string) error {
+	grade, desc := gradeDetails(r.F1Score)
+
+	var sb strings.Builder
+	sb.WriteString("SBOM Verification Note\n")
+	sb.WriteString("======================\n")
+	sb.WriteString(fmt.Sprintf("Generated:     %s\n", time.Now().Format("2006-01-02 15:04:05")))
+	sb.WriteString(fmt.Sprintf("Ground truth:  %s\n", filepath.Base(groundTruthPath)))
+	sb.WriteString(fmt.Sprintf("Generated SBOM:%s\n\n", filepath.Base(generatedPath)))
+
+	sb.WriteString("Scores\n")
+	sb.WriteString("------\n")
+	sb.WriteString(fmt.Sprintf("Precision        %6.1f%%\n", r.Precision))
+	sb.WriteString(fmt.Sprintf("Recall           %6.1f%%\n", r.Recall))
+	sb.WriteString(fmt.Sprintf("F1 Score         %6.1f%%\n", r.F1Score))
+	sb.WriteString(fmt.Sprintf("Version Accuracy %6.1f%%\n\n", r.VersionAccuracy))
+
+	sb.WriteString(fmt.Sprintf("Grade: %s  %s\n\n", grade, desc))
+
+	sb.WriteString("Components\n")
+	sb.WriteString("----------\n")
+	sb.WriteString(fmt.Sprintf("Ground truth : %d\n", r.GroundTruthCount))
+	sb.WriteString(fmt.Sprintf("Generated    : %d\n", r.GeneratedCount))
+	sb.WriteString(fmt.Sprintf("Matched      : %d\n", r.MatchedCount))
+	sb.WriteString(fmt.Sprintf("Missing      : %d\n", r.MissingCount))
+	sb.WriteString(fmt.Sprintf("Extra        : %d\n", r.ExtraCount))
+	sb.WriteString(fmt.Sprintf("Version delta: %d\n", r.VersionMismatch))
+
+	return os.WriteFile(notePath, []byte(sb.String()), 0644)
+}
+
+// gradeDetails returns the letter grade and a short description for an F1 score.
+func gradeDetails(f1 float64) (string, string) {
+	switch {
+	case f1 >= 95:
+		return "A+", "(Excellent)"
+	case f1 >= 90:
+		return "A ", "(Great)"
+	case f1 >= 85:
+		return "B+", "(Good)"
+	case f1 >= 80:
+		return "B ", "(Acceptable)"
+	case f1 >= 70:
+		return "C ", "(Needs Improvement)"
+	case f1 >= 60:
+		return "D ", "(Poor)"
+	default:
+		return "F ", "(Failing)"
 	}
 }
 

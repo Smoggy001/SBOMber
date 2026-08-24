@@ -1,6 +1,7 @@
 package sbom
 
 import (
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -12,8 +13,9 @@ import (
 )
 
 const (
-	cycloneDXFilename = "sbom-cyclonedx.xml"
-	spdxFilename      = "sbom.spdx"
+	cycloneDXFilename     = "sbom-cyclonedx.xml"
+	cycloneDXJSONFilename = "sbom-cyclonedx.json"
+	spdxFilename          = "sbom.spdx"
 )
 
 type cycloneDXBom struct {
@@ -66,6 +68,42 @@ type cycloneDXProperty struct {
 	Value string `xml:",chardata"`
 }
 
+// CycloneDX JSON structures
+
+type cycloneDXJSONBom struct {
+	BOMFormat    string                   `json:"bomFormat"`
+	SpecVersion  string                   `json:"specVersion"`
+	Version      int                      `json:"version"`
+	Metadata     cycloneDXJSONMetadata    `json:"metadata"`
+	Components   []cycloneDXJSONComponent `json:"components"`
+	Dependencies []cycloneDXJSONDep       `json:"dependencies"`
+}
+
+type cycloneDXJSONMetadata struct {
+	Timestamp string                 `json:"timestamp"`
+	Component cycloneDXJSONComponent `json:"component"`
+}
+
+type cycloneDXJSONComponent struct {
+	Type       string                  `json:"type"`
+	BOMRef     string                  `json:"bom-ref,omitempty"`
+	Name       string                  `json:"name"`
+	Version    string                  `json:"version,omitempty"`
+	Scope      string                  `json:"scope,omitempty"`
+	Purl       string                  `json:"purl,omitempty"`
+	Properties []cycloneDXJSONProperty `json:"properties,omitempty"`
+}
+
+type cycloneDXJSONProperty struct {
+	Name  string `json:"name"`
+	Value string `json:"value"`
+}
+
+type cycloneDXJSONDep struct {
+	Ref       string   `json:"ref"`
+	DependsOn []string `json:"dependsOn,omitempty"`
+}
+
 // SaveSBOM writes one or more SBOM files for the repository.
 // Returns the list of saved file paths and the output directory path.
 // Output is stored in ~/.sbomber/reports/<project-name>/
@@ -83,6 +121,14 @@ func SaveSBOM(repoDir, repoName string, summary deps.Summary, format string) ([]
 
 	if format == "cyclonedx" || format == "both" {
 		path, err := saveCycloneDX(outputDir, repoName, summary)
+		if err != nil {
+			return nil, "", err
+		}
+		saved = append(saved, path)
+	}
+
+	if format == "cyclonedx-json" {
+		path, err := saveCycloneDXJSON(outputDir, repoName, summary)
 		if err != nil {
 			return nil, "", err
 		}
@@ -116,6 +162,14 @@ func SaveSBOMToDir(outputDir, repoName string, summary deps.Summary, format stri
 		saved = append(saved, path)
 	}
 
+	if format == "cyclonedx-json" {
+		path, err := saveCycloneDXJSON(outputDir, repoName, summary)
+		if err != nil {
+			return nil, err
+		}
+		saved = append(saved, path)
+	}
+
 	if format == "spdx" || format == "both" {
 		path, err := saveSPDX(outputDir, repoName, summary)
 		if err != nil {
@@ -125,6 +179,127 @@ func SaveSBOMToDir(outputDir, repoName string, summary deps.Summary, format stri
 	}
 
 	return saved, nil
+}
+
+func saveCycloneDXJSON(repoDir, repoName string, summary deps.Summary) (string, error) {
+	if summary.DependencyGraph == nil {
+		summary.BuildGraph(repoName)
+	}
+
+	rootPurl := fmt.Sprintf("pkg:generic/%s", strings.ToLower(repoName))
+
+	bom := cycloneDXJSONBom{
+		BOMFormat:   "CycloneDX",
+		SpecVersion: "1.5",
+		Version:     1,
+		Metadata: cycloneDXJSONMetadata{
+			Timestamp: time.Now().UTC().Format(time.RFC3339),
+			Component: cycloneDXJSONComponent{
+				Type:   "application",
+				BOMRef: rootPurl,
+				Name:   repoName,
+			},
+		},
+		Components:   make([]cycloneDXJSONComponent, 0),
+		Dependencies: make([]cycloneDXJSONDep, 0),
+	}
+
+	bomRefMap := make(map[string]string)
+
+	addComponent := func(dep deps.Dependency, isDirect bool) {
+		purl := dep.Purl()
+		bomRefMap[dep.Name] = purl
+
+		scope := "optional"
+		if isDirect {
+			scope = mapScopeToRequired(dep.Scope)
+		}
+
+		props := buildJSONProperties(dep, isDirect)
+		bom.Components = append(bom.Components, cycloneDXJSONComponent{
+			Type:       "library",
+			BOMRef:     purl,
+			Name:       dep.Name,
+			Version:    dep.Version,
+			Scope:      scope,
+			Purl:       purl,
+			Properties: props,
+		})
+	}
+
+	for _, d := range summary.Direct {
+		addComponent(d, true)
+	}
+	for _, d := range summary.Transitive {
+		addComponent(d, false)
+	}
+
+	// Root dependency entry
+	rootDeps := make([]string, 0, len(summary.Direct))
+	for _, d := range summary.Direct {
+		if ref, ok := bomRefMap[d.Name]; ok {
+			rootDeps = append(rootDeps, ref)
+		}
+	}
+	bom.Dependencies = append(bom.Dependencies, cycloneDXJSONDep{Ref: rootPurl, DependsOn: rootDeps})
+
+	for _, dep := range append(summary.Direct, summary.Transitive...) {
+		if len(dep.Children) == 0 {
+			continue
+		}
+		ref, ok := bomRefMap[dep.Name]
+		if !ok {
+			continue
+		}
+		childRefs := make([]string, 0, len(dep.Children))
+		for _, child := range dep.Children {
+			if cr, ok := bomRefMap[child]; ok {
+				childRefs = append(childRefs, cr)
+			}
+		}
+		if len(childRefs) > 0 {
+			bom.Dependencies = append(bom.Dependencies, cycloneDXJSONDep{Ref: ref, DependsOn: childRefs})
+		}
+	}
+
+	data, err := json.MarshalIndent(bom, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("marshal cyclonedx json sbom: %w", err)
+	}
+
+	path := filepath.Join(repoDir, cycloneDXJSONFilename)
+	if err := os.WriteFile(path, append(data, '\n'), 0o644); err != nil {
+		return "", fmt.Errorf("write cyclonedx json sbom: %w", err)
+	}
+
+	return path, nil
+}
+
+func buildJSONProperties(dep deps.Dependency, isDirect bool) []cycloneDXJSONProperty {
+	depType := "transitive"
+	if isDirect {
+		depType = "direct"
+	}
+	ecosystem := dep.Ecosystem
+	if ecosystem == "" {
+		ecosystem = "unknown"
+	}
+	chain := dep.Chain
+	if chain == "" {
+		chain = dep.Name
+	}
+	sourceFile := dep.SourceFile
+	if sourceFile == "" {
+		sourceFile = "unknown"
+	}
+	return []cycloneDXJSONProperty{
+		{Name: "supplychain:dependency-type", Value: depType},
+		{Name: "supplychain:ecosystem", Value: ecosystem},
+		{Name: "supplychain:build-scope", Value: dep.BuildScope()},
+		{Name: "supplychain:depth", Value: fmt.Sprintf("%d", dep.Depth)},
+		{Name: "supplychain:chain", Value: chain},
+		{Name: "supplychain:source-file", Value: sourceFile},
+	}
 }
 
 func saveCycloneDX(repoDir, repoName string, summary deps.Summary) (string, error) {

@@ -10,6 +10,11 @@ import (
 	"github.com/Xsamsx/SBOMber/internal/deps"
 )
 
+// ParseContent parses a manifest file's raw content given its path.
+func ParseContent(path string, content []byte) (deps.Summary, error) {
+	return parseManifestContent(path, content)
+}
+
 func parseManifestContent(path string, content []byte) (deps.Summary, error) {
 	filename := getFilename(path)
 
@@ -26,6 +31,12 @@ func parseManifestContent(path string, content []byte) (deps.Summary, error) {
 		return parsePomXML(content)
 	case "Gemfile.lock":
 		return parseGemfileLock(content)
+	case "Cargo.lock":
+		return parseCargoLock(content)
+	case "composer.lock":
+		return parseComposerLock(content)
+	case "packages.lock.json":
+		return parseNuGetLock(content)
 	default:
 		return deps.Summary{}, nil
 	}
@@ -283,6 +294,177 @@ func parseGemfileLock(content []byte) (deps.Summary, error) {
 		}
 	}
 
+	return summary, nil
+}
+
+func parseCargoLock(content []byte) (deps.Summary, error) {
+	summary := deps.Summary{
+		Direct:     make([]deps.Dependency, 0),
+		Transitive: make([]deps.Dependency, 0),
+	}
+
+	type cargoPkg struct {
+		name         string
+		version      string
+		source       string
+		dependencies []string
+	}
+
+	var packages []cargoPkg
+	var current *cargoPkg
+	inDeps := false
+
+	scanner := bufio.NewScanner(strings.NewReader(string(content)))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+
+		if line == "[[package]]" {
+			if current != nil {
+				packages = append(packages, *current)
+			}
+			current = &cargoPkg{}
+			inDeps = false
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		if line == "dependencies = [" {
+			inDeps = true
+			continue
+		}
+		if inDeps && line == "]" {
+			inDeps = false
+			continue
+		}
+		if inDeps {
+			dep := strings.Trim(line, `",`)
+			if dep != "" {
+				current.dependencies = append(current.dependencies, strings.Fields(dep)[0])
+			}
+			continue
+		}
+		idx := strings.Index(line, " = ")
+		if idx != -1 {
+			key := strings.TrimSpace(line[:idx])
+			val := strings.Trim(strings.TrimSpace(line[idx+3:]), `"`)
+			switch key {
+			case "name":
+				current.name = val
+			case "version":
+				current.version = val
+			case "source":
+				current.source = val
+			}
+		}
+	}
+	if current != nil {
+		packages = append(packages, *current)
+	}
+
+	directNames := make(map[string]bool)
+	for _, pkg := range packages {
+		if pkg.source == "" || strings.HasPrefix(pkg.source, "path+") {
+			for _, dep := range pkg.dependencies {
+				directNames[dep] = true
+			}
+		}
+	}
+
+	for _, pkg := range packages {
+		if !strings.Contains(pkg.source, "registry+") && !strings.Contains(pkg.source, "git+") {
+			continue
+		}
+		isDirect := directNames[pkg.name]
+		depth := 1
+		if isDirect {
+			depth = 0
+		}
+		d := deps.Dependency{
+			Name:      pkg.name,
+			Version:   pkg.version,
+			Scope:     deps.ScopeRuntime,
+			Ecosystem: "cargo",
+			IsDirect:  isDirect,
+			Depth:     depth,
+		}
+		if isDirect {
+			summary.Direct = append(summary.Direct, d)
+		} else {
+			summary.Transitive = append(summary.Transitive, d)
+		}
+	}
+
+	return summary, nil
+}
+
+type composerLockJSON struct {
+	Packages    []struct{ Name, Version string } `json:"packages"`
+	PackagesDev []struct{ Name, Version string } `json:"packages-dev"`
+}
+
+func parseComposerLock(content []byte) (deps.Summary, error) {
+	var lock composerLockJSON
+	if err := json.Unmarshal(content, &lock); err != nil {
+		return deps.Summary{}, err
+	}
+	summary := deps.Summary{Direct: make([]deps.Dependency, 0)}
+	for _, pkg := range lock.Packages {
+		summary.Direct = append(summary.Direct, deps.Dependency{
+			Name: pkg.Name, Version: pkg.Version,
+			Scope: deps.ScopeRuntime, Ecosystem: "composer", IsDirect: true,
+		})
+	}
+	for _, pkg := range lock.PackagesDev {
+		summary.Direct = append(summary.Direct, deps.Dependency{
+			Name: pkg.Name, Version: pkg.Version,
+			Scope: deps.ScopeDev, Ecosystem: "composer", IsDirect: true,
+		})
+	}
+	return summary, nil
+}
+
+type nugetLockJSON struct {
+	Dependencies map[string]map[string]struct {
+		Type     string `json:"type"`
+		Resolved string `json:"resolved"`
+	} `json:"dependencies"`
+}
+
+func parseNuGetLock(content []byte) (deps.Summary, error) {
+	var lock nugetLockJSON
+	if err := json.Unmarshal(content, &lock); err != nil {
+		return deps.Summary{}, err
+	}
+	summary := deps.Summary{
+		Direct:     make([]deps.Dependency, 0),
+		Transitive: make([]deps.Dependency, 0),
+	}
+	seen := make(map[string]bool)
+	for _, frameworkDeps := range lock.Dependencies {
+		for name, dep := range frameworkDeps {
+			key := strings.ToLower(name)
+			if seen[key] {
+				continue
+			}
+			seen[key] = true
+			isDirect := strings.EqualFold(dep.Type, "Direct")
+			depth := 1
+			if isDirect {
+				depth = 0
+			}
+			d := deps.Dependency{
+				Name: name, Version: dep.Resolved,
+				Scope: deps.ScopeRuntime, Ecosystem: "nuget",
+				IsDirect: isDirect, Depth: depth,
+			}
+			if isDirect {
+				summary.Direct = append(summary.Direct, d)
+			} else {
+				summary.Transitive = append(summary.Transitive, d)
+			}
+		}
+	}
 	return summary, nil
 }
 

@@ -11,15 +11,18 @@ import (
 
 // KnownManifests maps manifest filenames to their ecosystems.
 var KnownManifests = map[string]string{
-	"package.json":      "npm",
-	"package-lock.json": "npm",
-	"yarn.lock":         "npm",
-	"requirements.txt":  "pypi",
-	"Pipfile.lock":      "pypi",
-	"go.mod":            "go",
-	"go.sum":            "go",
-	"pom.xml":           "maven",
-	"Gemfile.lock":      "rubygems",
+	"package.json":       "npm",
+	"package-lock.json":  "npm",
+	"yarn.lock":          "npm",
+	"requirements.txt":   "pypi",
+	"Pipfile.lock":       "pypi",
+	"go.mod":             "go",
+	"go.sum":             "go",
+	"pom.xml":            "maven",
+	"Gemfile.lock":       "rubygems",
+	"Cargo.lock":         "cargo",
+	"composer.lock":      "composer",
+	"packages.lock.json": "nuget",
 }
 
 // ProgressFunc is called to report scanning progress.
