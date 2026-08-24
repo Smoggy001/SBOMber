@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+      CGO_ENABLED: 1
 
     steps:
       - name: Check out code
@@ -21,6 +22,12 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Install golangci-lint
+        uses: golangci/golangci-lint-action@v6
+        with:
+          version: latest
+          install-only: true
+
       - name: Verify formatting
         run: |
           test -z "$(gofmt -l ./cmd ./internal)"
@@ -30,3 +37,6 @@ jobs:
 
       - name: Run vet
         run: go vet ./...
+
+      - name: Run golangci-lint
+        run: golangci-lint run --timeout=5m ./...

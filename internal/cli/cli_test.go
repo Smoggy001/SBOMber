@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -117,6 +118,71 @@ func TestInteractiveScanCurrentFolder(t *testing.T) {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("expected interactive output to contain %q, got %q", expected, output)
 		}
+	}
+}
+
+func TestMainExitCodes(t *testing.T) {
+	t.Parallel()
+
+	if code := Main([]string{"version"}, strings.NewReader(""), io.Discard, io.Discard); code != 0 {
+		t.Fatalf("expected success exit code 0, got %d", code)
+	}
+
+	if code := Main([]string{"scan", "--bad-flag"}, strings.NewReader(""), io.Discard, io.Discard); code != 2 {
+		t.Fatalf("expected invalid-argument exit code 2, got %d", code)
+	}
+
+	if code := Main([]string{"scan", "--format", "xml"}, strings.NewReader(""), io.Discard, io.Discard); code != 2 {
+		t.Fatalf("expected invalid-format exit code 2, got %d", code)
+	}
+}
+
+func TestMainRejectsFailOnVulnWithoutInclude(t *testing.T) {
+	t.Parallel()
+
+	if code := Main([]string{"scan", "--fail-on-vuln"}, strings.NewReader(""), io.Discard, io.Discard); code != 2 {
+		t.Fatalf("expected fail-on-vuln usage error exit code 2, got %d", code)
+	}
+}
+
+func TestMainNoColorDisablesANSI(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	mustMkdirAll(t, filepath.Join(root, ".git"))
+	mustWriteFile(t, filepath.Join(root, "package.json"), `{"name":"demo"}`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	if code := Main([]string{"scan", "--no-color", root}, strings.NewReader(""), &stdout, &stderr); code != 0 {
+		t.Fatalf("expected success exit code 0, got %d, stderr=%q", code, stderr.String())
+	}
+
+	if strings.Contains(stdout.String(), "\033[") {
+		t.Fatalf("expected no ANSI color sequences when --no-color is used, got %q", stdout.String())
+	}
+}
+
+func TestMainMissingGrypeIsToolError(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	mustMkdirAll(t, filepath.Join(root, ".git"))
+	mustWriteFile(t, filepath.Join(root, "package.json"), `{"name":"demo"}`)
+
+	oldPath := os.Getenv("PATH")
+	noGrypeDir := t.TempDir()
+	if err := os.Setenv("PATH", noGrypeDir); err != nil {
+		t.Fatalf("set PATH: %v", err)
+	}
+	defer func() { _ = os.Setenv("PATH", oldPath) }()
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	if code := Main([]string{"scan", "--include-vulnerabilities", root}, strings.NewReader(""), &stdout, &stderr); code != 2 {
+		t.Fatalf("expected missing Grype exit code 2, got %d, stderr=%q", code, stderr.String())
 	}
 }
 

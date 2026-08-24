@@ -49,12 +49,6 @@ var (
 			Foreground(lipgloss.Color("39")). // Cyan
 			MarginLeft(2)
 
-	menuBoxStyle = lipgloss.NewStyle().
-			Border(lipgloss.RoundedBorder()).
-			BorderForeground(lipgloss.Color("240")).
-			Padding(1, 2).
-			MarginLeft(2)
-
 	inputStyle = lipgloss.NewStyle().
 			Bold(true)
 )
@@ -96,7 +90,6 @@ type model struct {
 	scanFormat    string
 	includeVulns  bool
 	pathInput     string
-	scanOutput    string
 	quitting      bool
 	githubToken   string
 	githubURLs    string
@@ -308,7 +301,11 @@ func (m model) updateGitHubToken(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.Type {
 	case tea.KeyEnter:
 		if m.githubToken != "" {
-			saveGitHubToken(m.githubToken)
+			if err := saveGitHubToken(m.githubToken); err != nil {
+				m.tokenSaved = false
+				m.state = viewGitHubURLs
+				return m, nil
+			}
 			m.tokenSaved = true
 			m.state = viewGitHubURLs
 		}
@@ -641,15 +638,15 @@ func renderHelp() string {
 	var b strings.Builder
 
 	b.WriteString(titleStyle.MarginLeft(2).Render("  USAGE") + "\n\n")
-	b.WriteString(fmt.Sprintf("  %s                                     %s\n", accentStyle.Render("  sbomber"), dimStyle.Render("Interactive mode")))
-	b.WriteString(fmt.Sprintf("  %s [path] [flags]                 %s\n", accentStyle.Render("  sbomber scan"), dimStyle.Render("Scan repositories")))
-	b.WriteString(fmt.Sprintf("  %s <url> [flags]              %s\n", accentStyle.Render("  sbomber github"), dimStyle.Render("Scan GitHub repos")))
-	b.WriteString(fmt.Sprintf("  %s                             %s\n\n", accentStyle.Render("  sbomber version"), dimStyle.Render("Show version")))
+	_, _ = fmt.Fprintf(&b, "  %s                                     %s\n", accentStyle.Render("  sbomber"), dimStyle.Render("Interactive mode"))
+	_, _ = fmt.Fprintf(&b, "  %s [path] [flags]                 %s\n", accentStyle.Render("  sbomber scan"), dimStyle.Render("Scan repositories"))
+	_, _ = fmt.Fprintf(&b, "  %s <url> [flags]              %s\n", accentStyle.Render("  sbomber github"), dimStyle.Render("Scan GitHub repos"))
+	_, _ = fmt.Fprintf(&b, "  %s                             %s\n\n", accentStyle.Render("  sbomber version"), dimStyle.Render("Show version"))
 
 	b.WriteString(titleStyle.MarginLeft(2).Render("  FLAGS") + "\n\n")
-	b.WriteString(fmt.Sprintf("  %s   cyclonedx | spdx | both          %s\n", accentStyle.Render("  --format"), dimStyle.Render("(default: cyclonedx)")))
-	b.WriteString(fmt.Sprintf("  %s             %s\n", accentStyle.Render("  --include-vulnerabilities"), dimStyle.Render("scan vulnerabilities with Grype")))
-	b.WriteString(fmt.Sprintf("  %s                          %s\n\n", accentStyle.Render("  --health"), dimStyle.Render("include supply chain health metrics")))
+	_, _ = fmt.Fprintf(&b, "  %s   cyclonedx | spdx | both          %s\n", accentStyle.Render("  --format"), dimStyle.Render("(default: cyclonedx)"))
+	_, _ = fmt.Fprintf(&b, "  %s             %s\n", accentStyle.Render("  --include-vulnerabilities"), dimStyle.Render("scan vulnerabilities with Grype"))
+	_, _ = fmt.Fprintf(&b, "  %s                          %s\n\n", accentStyle.Render("  --health"), dimStyle.Render("include supply chain health metrics"))
 
 	b.WriteString(titleStyle.MarginLeft(2).Render("  VULNERABILITY SCANNING") + "\n\n")
 	b.WriteString(dimStyle.MarginLeft(2).Render("  SBOMber uses Grype when vulnerability scanning is enabled.") + "\n")
@@ -699,7 +696,7 @@ func fetchGitHubRateLimit(token string) string {
 		b.WriteString(dimStyle.MarginLeft(2).Render("  Error connecting to GitHub API") + "\n")
 		return b.String()
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	var result struct {
 		Resources struct {
@@ -730,9 +727,9 @@ func fetchGitHubRateLimit(token string) string {
 	}
 
 	b.WriteString(dimStyle.MarginLeft(2).Render("  Rate Limit:") + "\n")
-	b.WriteString(fmt.Sprintf("    Remaining: %s / %d\n", remainingStyle.Render(fmt.Sprintf("%d", core.Remaining)), core.Limit))
-	b.WriteString(fmt.Sprintf("    Resets in: %s\n", dimStyle.Render(timeUntilReset.String())))
-	b.WriteString(fmt.Sprintf("    Reset at:  %s\n\n", dimStyle.Render(resetTime.Format("15:04:05"))))
+	_, _ = fmt.Fprintf(&b, "    Remaining: %s / %d\n", remainingStyle.Render(fmt.Sprintf("%d", core.Remaining)), core.Limit)
+	_, _ = fmt.Fprintf(&b, "    Resets in: %s\n", dimStyle.Render(timeUntilReset.String()))
+	_, _ = fmt.Fprintf(&b, "    Reset at:  %s\n\n", dimStyle.Render(resetTime.Format("15:04:05")))
 
 	// Estimate repos that can be scanned
 	// ~10 requests per repo (tree + manifests + health checks)
@@ -867,8 +864,8 @@ func (m model) renderGitHubStatusView() string {
 
 // removeGitHubToken clears the saved token from both the config file and env.
 func removeGitHubToken() {
-	os.Setenv("GITHUB_TOKEN", "")
-	saveGitHubToken("")
+	_ = os.Setenv("GITHUB_TOKEN", "")
+	_ = saveGitHubToken("")
 }
 
 func (m model) renderGitHubURLs() string {
@@ -997,12 +994,6 @@ type TUIResult struct {
 	IncludeHealth bool
 }
 
-// runTUI launches the bubbletea interactive TUI and returns the user's choice.
-func runTUI() (action string, scanPath string, scanFormat string, includeVulns bool) {
-	result := runTUIFull()
-	return result.Action, result.ScanPath, result.ScanFormat, result.IncludeVulns
-}
-
 // runTUIFull launches the TUI and returns all results including GitHub options
 func runTUIFull() TUIResult {
 	m := newModel()
@@ -1082,7 +1073,6 @@ type resultsModel struct {
 	cursor     int
 	actions    []string
 	quitting   bool
-	openFolder bool
 }
 
 func newResultsModel(content, outputPath string) resultsModel {

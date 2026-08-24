@@ -147,18 +147,38 @@ Compare your generated SBOM against a ground truth to measure accuracy.
 ./bin/sbomber verify reference.json generated.json --json
 ```
 
-**Output:**
+**Output format** (field layout only — these are placeholder digits, not a
+measured result; see *Verified accuracy* below for a real one):
 ```
 ╔══════════════════════════════════════════════════════════════╗
 ║                    SBOM VERIFICATION REPORT                  ║
 ╚══════════════════════════════════════════════════════════════╝
 
-│ Precision:        98.0%  (correct / total reported)          │
-│ Recall:           96.7%  (found / total in ground truth)     │
-│ F1 Score:         97.3%  (harmonic mean)                     │
+│ Precision:        NN.N%  (correct / total reported)          │
+│ Recall:           NN.N%  (found / total in ground truth)     │
+│ F1 Score:         NN.N%  (harmonic mean)                     │
 
-Overall Grade: A+ (Excellent)
+Overall Grade: <grade>
 ```
+
+### Verified accuracy
+
+No accuracy figure for SBOMber is quoted anywhere (README, report, poster,
+client conversation) unless it has a committed ground-truth fixture and a
+`sbomber verify` run behind it — an unsourced percentage is an integrity
+problem, not just an accuracy one.
+
+The one currently on record:
+[`testdata/fixtures/ground-truth/npm-basic`](testdata/fixtures/ground-truth/npm-basic)
+— method, fixture, and full `sbomber verify` output committed, run twice:
+before and after the npm package-lock reconciliation fix
+([`docs/design/npm-identity-reconciliation.md`](docs/design/npm-identity-reconciliation.md)).
+Precision/Recall/F1 were 100% in both runs; **Version Accuracy went from 0%
+to 100%** once the parser started reconciling `package.json` ranges against
+`package-lock.json` resolutions instead of reporting the raw semver range.
+See the fixture's `METHOD.md` for both runs' numbers and what's still not
+covered by this one small fixture (the nested-version case, covered instead
+by dedicated unit tests — see that same design doc).
 
 ---
 
