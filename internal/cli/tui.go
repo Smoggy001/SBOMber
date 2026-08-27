@@ -13,6 +13,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+
+	"github.com/Xsamsx/SBOMber/internal/verify"
 )
 
 // Styles - using ANSI 256 colors for better light/dark terminal compatibility
@@ -1067,20 +1069,45 @@ func saveGitHubToken(token string) error {
 }
 
 // resultsModel for showing scan results with actions
+// Ground-truth accuracy check sub-states within the results screen.
+const (
+	gtStateMenu = iota
+	gtStatePathInput
+	gtStateReport
+)
+
 type resultsModel struct {
 	content    string
 	outputPath string
 	cursor     int
 	actions    []string
 	quitting   bool
+
+	// Ground-truth accuracy check. groundTruthSBOM is the single
+	// generated SBOM to compare against, derived from content via
+	// extractSingleScanSBOM; the action is only offered (see actions
+	// above) when that derivation succeeds, i.e. exactly one repo was
+	// scanned. See docs/design/canonical-scan.md for why a comparison
+	// needs exactly one generated SBOM to be meaningful.
+	groundTruthSBOM string
+	gtState         int
+	gtPathInput     string
+	gtReport        string
+	gtErr           string
 }
 
 func newResultsModel(content, outputPath string) resultsModel {
+	actions := []string{"Back to menu", "Open output folder", "Quit"}
+	sbomPath := extractSingleScanSBOM(content)
+	if sbomPath != "" {
+		actions = append(actions, "Check ground-truth accuracy")
+	}
 	return resultsModel{
-		content:    content,
-		outputPath: outputPath,
-		cursor:     0,
-		actions:    []string{"Back to menu", "Open output folder", "Quit"},
+		content:         content,
+		outputPath:      outputPath,
+		cursor:          0,
+		actions:         actions,
+		groundTruthSBOM: sbomPath,
 	}
 }
 
@@ -1089,6 +1116,13 @@ func (m resultsModel) Init() tea.Cmd {
 }
 
 func (m resultsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch m.gtState {
+	case gtStatePathInput:
+		return m.updateGroundTruthPathInput(msg)
+	case gtStateReport:
+		return m.updateGroundTruthReport(msg)
+	}
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -1101,19 +1135,23 @@ func (m resultsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.cursor++
 			}
 		case "enter":
-			switch m.cursor {
-			case 0: // Back to menu
+			switch m.actions[m.cursor] {
+			case "Back to menu":
 				m.quitting = true
 				return m, tea.Quit
-			case 1: // Open folder - open and stay
+			case "Open output folder":
 				if m.outputPath != "" {
 					openFolder(m.outputPath)
 				}
 				return m, nil // Stay on results screen
-			case 2: // Quit
+			case "Quit":
 				m.quitting = true
 				m.cursor = 2 // Mark as quit
 				return m, tea.Quit
+			case "Check ground-truth accuracy":
+				m.gtState = gtStatePathInput
+				m.gtPathInput = ""
+				m.gtErr = ""
 			}
 		case "q", "ctrl+c", "esc":
 			m.quitting = true
@@ -1123,9 +1161,77 @@ func (m resultsModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// updateGroundTruthPathInput handles free-text entry of the ground-truth
+// SBOM path, mirroring model.updatePathInput's key handling.
+func (m resultsModel) updateGroundTruthPathInput(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+
+	switch keyMsg.Type {
+	case tea.KeyEnter:
+		path := strings.TrimSpace(m.gtPathInput)
+		if path == "" {
+			m.gtErr = "enter a path to a ground-truth SBOM"
+			return m, nil
+		}
+		result, err := verify.VerifyFiles(path, m.groundTruthSBOM)
+		if err != nil {
+			m.gtErr = err.Error()
+			return m, nil
+		}
+		m.gtReport = result.PrintReport()
+		m.gtErr = ""
+		m.gtState = gtStateReport
+	case tea.KeyBackspace:
+		if len(m.gtPathInput) > 0 {
+			m.gtPathInput = m.gtPathInput[:len(m.gtPathInput)-1]
+		}
+	case tea.KeyEsc:
+		m.gtState = gtStateMenu
+		m.gtErr = ""
+	case tea.KeyCtrlC:
+		m.quitting = true
+		return m, tea.Quit
+	case tea.KeyTab:
+		m.gtPathInput = expandPathWithTab(m.gtPathInput)
+	case tea.KeySpace:
+		m.gtPathInput += " "
+	case tea.KeyRunes:
+		m.gtPathInput += string(keyMsg.Runes)
+	}
+	return m, nil
+}
+
+// updateGroundTruthReport handles the report screen shown after a
+// successful ground-truth comparison: any key other than quit returns to
+// the results menu.
+func (m resultsModel) updateGroundTruthReport(msg tea.Msg) (tea.Model, tea.Cmd) {
+	keyMsg, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+
+	switch keyMsg.String() {
+	case "q", "ctrl+c":
+		m.quitting = true
+		return m, tea.Quit
+	default:
+		m.gtState = gtStateMenu
+	}
+	return m, nil
+}
+
 func (m resultsModel) View() string {
 	if m.quitting {
 		return ""
+	}
+	switch m.gtState {
+	case gtStatePathInput:
+		return m.viewGroundTruthPathInput()
+	case gtStateReport:
+		return m.viewGroundTruthReport()
 	}
 
 	var b strings.Builder
@@ -1188,6 +1294,47 @@ func (m resultsModel) View() string {
 	b.WriteString("\n")
 	b.WriteString(dimStyle.MarginLeft(4).Render("↑/↓ navigate  enter select") + "\n")
 
+	return b.String()
+}
+
+func (m resultsModel) viewGroundTruthPathInput() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(renderBanner())
+
+	header := titleStyle.MarginLeft(4).Render("  GROUND-TRUTH ACCURACY CHECK")
+	b.WriteString(header + "\n\n")
+	b.WriteString(dimStyle.MarginLeft(4).Render("  Compares the SBOM just generated against a ground-truth") + "\n")
+	b.WriteString(dimStyle.MarginLeft(4).Render("  SBOM you provide — see docs/design/canonical-scan.md.") + "\n\n")
+
+	prompt := inputStyle.Render("  Ground-truth SBOM path: ")
+	cursor := accentStyle.Render("█")
+	input := accentStyle.Render(m.gtPathInput)
+	b.WriteString("  " + prompt + input + cursor + "\n\n")
+
+	if m.gtErr != "" {
+		errStyle := lipgloss.NewStyle().Foreground(lipgloss.Color("#f85149")).MarginLeft(4)
+		b.WriteString(errStyle.Render("Error: "+m.gtErr) + "\n\n")
+	}
+
+	b.WriteString(dimStyle.MarginLeft(4).Render("  enter check  esc back") + "\n")
+	return b.String()
+}
+
+func (m resultsModel) viewGroundTruthReport() string {
+	var b strings.Builder
+	b.WriteString("\n")
+	b.WriteString(renderBanner())
+
+	header := titleStyle.MarginLeft(4).Render("  GROUND-TRUTH ACCURACY CHECK")
+	b.WriteString(header + "\n\n")
+
+	for _, line := range strings.Split(m.gtReport, "\n") {
+		b.WriteString("    " + line + "\n")
+	}
+
+	b.WriteString("\n")
+	b.WriteString(dimStyle.MarginLeft(4).Render("  any key back  q quit") + "\n")
 	return b.String()
 }
 

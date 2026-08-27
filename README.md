@@ -77,6 +77,8 @@ make build
 
 Navigate with arrow keys, select with Enter. The TUI provides guided workflows for all features.
 
+After a local scan of a single repo, the results screen offers **Check ground-truth accuracy** — point it at a ground-truth SBOM (see [Verified accuracy](#verified-accuracy) below) and it runs the same comparison `sbomber verify` does, inline. Only offered when the scan covered exactly one repo, since a comparison needs exactly one generated SBOM to be meaningful.
+
 ### Local Scanning
 
 ```bash

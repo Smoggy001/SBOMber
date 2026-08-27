@@ -121,6 +121,113 @@ func TestInteractiveScanCurrentFolder(t *testing.T) {
 	}
 }
 
+const singleLodashPackageLock = `{
+  "lockfileVersion": 3,
+  "packages": {
+    "": {"dependencies": {"lodash": "^4.17.15"}},
+    "node_modules/lodash": {"version": "4.18.1"}
+  }
+}`
+
+// TestInteractiveScanOffersGroundTruthCheck is the success case: after an
+// interactive scan of a single repo, answering "y" to the ground-truth
+// prompt and pointing at a matching ground-truth SBOM prints a full
+// verification report.
+func TestInteractiveScanOffersGroundTruthCheck(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	repo := filepath.Join(root, "demo")
+	mustMkdirAll(t, filepath.Join(repo, ".git"))
+	mustWriteFile(t, filepath.Join(repo, "package.json"), `{"dependencies":{"lodash":"^4.17.15"}}`)
+	mustWriteFile(t, filepath.Join(repo, "package-lock.json"), singleLodashPackageLock)
+
+	groundTruth := filepath.Join(root, "ground-truth.cdx.json")
+	mustWriteFile(t, groundTruth, `{"bomFormat":"CycloneDX","components":[{"type":"library","name":"lodash","version":"4.18.1","purl":"pkg:npm/lodash@4.18.1"}]}`)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	input := "2\n" + repo + "\n\nN\ny\n" + groundTruth + "\n"
+	exitCode := Main(nil, strings.NewReader(input), &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())
+	}
+
+	output := stdout.String()
+	for _, expected := range []string{
+		"Check accuracy against a ground-truth SBOM?",
+		"SBOM VERIFICATION REPORT",
+		"Version Accuracy: 100.0%",
+	} {
+		if !strings.Contains(output, expected) {
+			t.Fatalf("expected output to contain %q, got %q", expected, output)
+		}
+	}
+}
+
+// TestInteractiveScanGroundTruthMissingFile is the failure/unknown-path
+// case: answering "y" but pointing at a ground-truth file that does not
+// exist must fail the check cleanly (exit 2, a clear stderr message)
+// rather than crash or hang.
+func TestInteractiveScanGroundTruthMissingFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	repo := filepath.Join(root, "demo")
+	mustMkdirAll(t, filepath.Join(repo, ".git"))
+	mustWriteFile(t, filepath.Join(repo, "package.json"), `{"dependencies":{"lodash":"^4.17.15"}}`)
+	mustWriteFile(t, filepath.Join(repo, "package-lock.json"), singleLodashPackageLock)
+
+	missingGroundTruth := filepath.Join(root, "does-not-exist.cdx.json")
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	input := "2\n" + repo + "\n\nN\ny\n" + missingGroundTruth + "\n"
+	exitCode := Main(nil, strings.NewReader(input), &stdout, &stderr)
+	if exitCode != 2 {
+		t.Fatalf("expected exit code 2 for a missing ground-truth file, got %d, stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "ground-truth check failed") {
+		t.Fatalf("expected a ground-truth check error on stderr, got %q", stderr.String())
+	}
+}
+
+// TestInteractiveScanMultiRepoSkipsGroundTruthPrompt is the boundary case:
+// a ground-truth comparison needs exactly one generated SBOM to compare
+// against, so scanning a root that contains two repos must skip the prompt
+// entirely rather than ask which one to check (or worse, silently pick
+// one). The input stream deliberately has no answer queued for a
+// ground-truth prompt; if the prompt were shown anyway, reading past the
+// end of input would surface as a non-zero exit.
+func TestInteractiveScanMultiRepoSkipsGroundTruthPrompt(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	repoA := filepath.Join(root, "alpha")
+	repoB := filepath.Join(root, "beta")
+	mustMkdirAll(t, filepath.Join(repoA, ".git"))
+	mustMkdirAll(t, filepath.Join(repoB, ".git"))
+	mustWriteFile(t, filepath.Join(repoA, "package.json"), `{"dependencies":{"lodash":"^4.17.15"}}`)
+	mustWriteFile(t, filepath.Join(repoA, "package-lock.json"), singleLodashPackageLock)
+	mustWriteFile(t, filepath.Join(repoB, "package.json"), `{"dependencies":{"lodash":"^4.17.15"}}`)
+	mustWriteFile(t, filepath.Join(repoB, "package-lock.json"), singleLodashPackageLock)
+
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+
+	input := "2\n" + root + "\n\nN\n"
+	exitCode := Main(nil, strings.NewReader(input), &stdout, &stderr)
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d, stdout=%q stderr=%q", exitCode, stdout.String(), stderr.String())
+	}
+
+	if strings.Contains(stdout.String(), "ground-truth") {
+		t.Fatalf("expected no ground-truth prompt when multiple repos were scanned, got %q", stdout.String())
+	}
+}
+
 func TestMainExitCodes(t *testing.T) {
 	t.Parallel()
 

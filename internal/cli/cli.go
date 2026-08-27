@@ -1112,6 +1112,22 @@ func printChain(w io.Writer, chain string) {
 	}
 }
 
+// runInteractive branches on the bubbletea TUI vs. a plain-text numbered
+// prompt flow. In practice only the TUI branch is ever reached from the
+// real binary: cmd/sbomber/main.go always calls Main with the literal
+// os.Stdin/os.Stdout package values, so this identity check is true for
+// every real invocation regardless of whether stdin is a terminal, a pipe,
+// or a redirected file — Go doesn't change which *os.File value os.Stdin
+// holds based on what's connected to fd 0. The plain-text branch below
+// (promptExportFormat, promptVulnerabilityScan,
+// runScanAndOfferGroundTruthCheck) is exercised only by tests that call
+// Main directly with a substitute io.Reader/io.Writer (e.g.
+// strings.NewReader), which is a different Go value than os.Stdin. It is
+// real, tested code — just not reachable by running `sbomber`. Fixing
+// that would mean adding proper terminal detection (e.g.
+// golang.org/x/term.IsTerminal), which is a larger, separate change
+// affecting every existing prompt here, not just the ground-truth one
+// added alongside this comment; noted here rather than fixed silently.
 func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	if stdin == os.Stdin && stdout == os.Stdout {
 		for {
@@ -1269,7 +1285,7 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 		}
 		args = append(args, ".")
 
-		return runScan(args, stdout, stderr)
+		return runScanAndOfferGroundTruthCheck(args, reader, stdout, stderr)
 	case "2":
 		_, _ = fmt.Fprint(stdout, "Folder to scan: ")
 		path, err := reader.ReadString('\n')
@@ -1299,7 +1315,7 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 		}
 		args = append(args, path)
 
-		return runScan(args, stdout, stderr)
+		return runScanAndOfferGroundTruthCheck(args, reader, stdout, stderr)
 	case "3":
 		_, _ = fmt.Fprintf(stdout, "sbomber %s\n", version)
 		return 0
@@ -1368,6 +1384,112 @@ func promptVulnerabilityScan(reader *bufio.Reader, stdout io.Writer, stderr io.W
 		_, _ = fmt.Fprintf(stderr, "invalid vulnerability choice %q\n", strings.TrimSpace(choice))
 		return false, 1
 	}
+}
+
+// runScanAndOfferGroundTruthCheck runs a scan, prints its output, and then
+// — only when the scan produced exactly one repo's SBOM, since a
+// ground-truth comparison needs exactly one generated SBOM to compare
+// against — offers to check that SBOM's accuracy against a ground-truth
+// SBOM the user points to.
+func runScanAndOfferGroundTruthCheck(args []string, reader *bufio.Reader, stdout io.Writer, stderr io.Writer) int {
+	var buf bytes.Buffer
+	exitCode := runScan(args, &buf, &buf)
+	output := buf.String()
+	_, _ = fmt.Fprint(stdout, output)
+	if exitCode != 0 {
+		return exitCode
+	}
+
+	sbomPath := extractSingleScanSBOM(output)
+	if sbomPath == "" {
+		return 0
+	}
+
+	return promptGroundTruthCheck(reader, stdout, stderr, sbomPath)
+}
+
+// extractSingleScanSBOM parses a scan's captured output for exactly one
+// repo's "output folder:"/"exported SBOM:" lines (printed by
+// printDependencySummary), preferring the CycloneDX file when both formats
+// were exported. Returns "" when zero or more than one repo was scanned,
+// since there is then no single generated SBOM to offer a ground-truth
+// comparison against.
+func extractSingleScanSBOM(scanOutput string) string {
+	var outputDir string
+	var sbomFiles []string
+	repoCount := 0
+
+	for _, line := range strings.Split(scanOutput, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if after, ok := strings.CutPrefix(trimmed, "output folder:"); ok {
+			repoCount++
+			outputDir = strings.TrimSpace(after)
+			sbomFiles = nil
+			continue
+		}
+		if after, ok := strings.CutPrefix(trimmed, "exported SBOM:"); ok {
+			sbomFiles = append(sbomFiles, strings.TrimSpace(after))
+		}
+	}
+
+	if repoCount != 1 || len(sbomFiles) == 0 {
+		return ""
+	}
+
+	for _, name := range sbomFiles {
+		if name == "sbom-cyclonedx.xml" {
+			return filepath.Join(outputDir, name)
+		}
+	}
+	return filepath.Join(outputDir, sbomFiles[0])
+}
+
+// promptGroundTruthCheck asks whether to check the just-generated SBOM's
+// accuracy against a ground-truth SBOM and, if so, for that file's path,
+// then runs the same comparison sbomber verify uses and prints the report.
+func promptGroundTruthCheck(reader *bufio.Reader, stdout io.Writer, stderr io.Writer, generatedSBOMPath string) int {
+	_, _ = fmt.Fprint(stdout, "\nCheck accuracy against a ground-truth SBOM? [y/N]: ")
+
+	choice, err := reader.ReadString('\n')
+	if err != nil && len(choice) == 0 {
+		_, _ = fmt.Fprintf(stderr, "read ground-truth choice: %v\n", err)
+		return 1
+	}
+
+	switch strings.ToLower(strings.TrimSpace(choice)) {
+	case "", "n", "no":
+		return 0
+	case "y", "yes":
+		// fall through to the path prompt below
+	default:
+		_, _ = fmt.Fprintf(stderr, "invalid ground-truth choice %q\n", strings.TrimSpace(choice))
+		return 1
+	}
+
+	_, _ = fmt.Fprint(stdout, "Path to ground-truth SBOM: ")
+	pathInput, err := reader.ReadString('\n')
+	if err != nil && len(pathInput) == 0 {
+		_, _ = fmt.Fprintf(stderr, "read ground-truth path: %v\n", err)
+		return 1
+	}
+
+	groundTruthPath := strings.TrimSpace(pathInput)
+	if groundTruthPath == "" {
+		_, _ = fmt.Fprintln(stderr, "no ground-truth path provided, skipping accuracy check")
+		return 0
+	}
+
+	result, err := verify.VerifyFiles(groundTruthPath, generatedSBOMPath)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "ground-truth check failed: %v\n", err)
+		return 2
+	}
+
+	_, _ = fmt.Fprint(stdout, result.PrintReport())
+	if result.F1Score < 70 {
+		return 1
+	}
+	return 0
 }
 
 func printDependencySummary(stdout io.Writer, stderr io.Writer, repoName, repoPath string, detection ecosystem.Detection, selectedFormat string, includeVulnerabilities bool) int {
