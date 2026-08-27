@@ -637,22 +637,30 @@ func (m model) renderDone() string {
 	switch m.selected {
 	case "version":
 		ver := accentStyle.Render("SBOMber") + " " + dimStyle.Render("v"+version)
-		b.WriteString("  " + ver + "\n\n")
-		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu") + "\n")
+		b.WriteString("  ")
+		b.WriteString(ver)
+		b.WriteString("\n\n")
+		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu"))
+		b.WriteString("\n")
 	case "help":
 		b.WriteString(renderHelp())
 		b.WriteString("\n")
-		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu") + "\n")
+		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu"))
+		b.WriteString("\n")
 	case "github-status":
 		b.WriteString(renderGitHubStatus())
 		b.WriteString("\n")
-		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu") + "\n")
+		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu"))
+		b.WriteString("\n")
 	case "open-reports":
-		b.WriteString(titleStyle.MarginLeft(2).Render("  OPENING REPORTS FOLDER") + "\n\n")
+		b.WriteString(titleStyle.MarginLeft(2).Render("  OPENING REPORTS FOLDER"))
+		b.WriteString("\n\n")
 		reportsDir := filepath.Join(os.Getenv("HOME"), ".sbomber", "reports")
-		b.WriteString(dimStyle.MarginLeft(2).Render("  "+reportsDir) + "\n\n")
+		b.WriteString(dimStyle.MarginLeft(2).Render("  " + reportsDir))
+		b.WriteString("\n\n")
 		openFolder(reportsDir)
-		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu") + "\n")
+		b.WriteString(dimStyle.MarginLeft(2).Render("  Press Enter to return to menu"))
+		b.WriteString("\n")
 	}
 
 	return b.String()
