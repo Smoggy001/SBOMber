@@ -1334,7 +1334,7 @@ func (m resultsModel) View() string {
 
 	// Content - no color styling so it works on light and dark terminals
 	// Render each line with just margin
-	for _, line := range strings.Split(m.content, "\n") {
+	for line := range strings.SplitSeq(m.content, "\n") {
 		b.WriteString("    ")
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -1433,7 +1433,7 @@ func (m resultsModel) viewGroundTruthReport() string {
 	b.WriteString(header)
 	b.WriteString("\n\n")
 
-	for _, line := range strings.Split(m.gtReport, "\n") {
+	for line := range strings.SplitSeq(m.gtReport, "\n") {
 		b.WriteString("    ")
 		b.WriteString(line)
 		b.WriteString("\n")
@@ -1521,8 +1521,8 @@ func expandPathWithTab(input string) string {
 		// Convert back to use ~ if it was used
 		if strings.HasPrefix(input, "~") {
 			home, _ := os.UserHomeDir()
-			if strings.HasPrefix(matches[0], home) {
-				return "~" + strings.TrimPrefix(matches[0], home)
+			if rest, ok := strings.CutPrefix(matches[0], home); ok {
+				return "~" + rest
 			}
 		}
 		return matches[0]
@@ -1545,8 +1545,8 @@ func expandPathWithTab(input string) string {
 		if len(common) > len(path) {
 			if strings.HasPrefix(input, "~") {
 				home, _ := os.UserHomeDir()
-				if strings.HasPrefix(common, home) {
-					return "~" + strings.TrimPrefix(common, home)
+				if rest, ok := strings.CutPrefix(common, home); ok {
+					return "~" + rest
 				}
 			}
 			return common

@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -1429,7 +1430,7 @@ func extractSingleScanSBOM(scanOutput string) string {
 	var sbomFiles []string
 	repoCount := 0
 
-	for _, line := range strings.Split(scanOutput, "\n") {
+	for line := range strings.SplitSeq(scanOutput, "\n") {
 		trimmed := strings.TrimSpace(line)
 		if after, ok := strings.CutPrefix(trimmed, "output folder:"); ok {
 			repoCount++
@@ -1712,13 +1713,7 @@ func generateVulnReport(stdout io.Writer, stderr io.Writer, scanPath, outputDir,
 }
 
 func containsEcosystem(names []ecosystem.Name, candidate ecosystem.Name) bool {
-	for _, name := range names {
-		if name == candidate {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(names, candidate)
 }
 
 func resolveScanRoot(root string) (string, error) {
