@@ -105,6 +105,51 @@ ergonomics built around "one name means one package." That redesign is
 follow-up work, not done here — flagging it now, at discovery time, rather
 than letting it surface later as a surprise.
 
+## A second, separate bug found by the ground-truth automation (not fixed here)
+
+Building `internal/cli/groundtruth_test.go` — an automated regression test
+that reruns each committed ground-truth fixture on every `go test ./...`
+— surfaced a second bug distinct from the one this document is otherwise
+about. `testdata/fixtures/npm-basic` carries a `yarn.lock` alongside its
+`package-lock.json`. That `yarn.lock` is a **classic Yarn v1** lockfile
+(`# yarn lockfile v1`, `version "4.17.15"` with no colon), but
+`EnrichFromYarnLock`'s own doc comment says it "reads a Yarn Berry
+lockfile" — a different, YAML-like format. Parsing a v1 file with the
+Berry-specific parser does not error (the file is well-formed text, just
+not in the shape the parser expects); its `  version:` prefix check simply
+never matches v1's `  version "..."` lines, so every entry's `Version`
+stays empty and gets silently skipped.
+
+The consequence: `buildRepoDependencySummary` tries
+`EnrichFromYarnLock` first and only falls through to
+`EnrichFromPackageLock` **on an error**:
+
+```go
+if enriched, err := npm.EnrichFromYarnLock(repoPath, npmSummary); err == nil {
+    npmSummary = enriched
+} else if enriched, err := npm.EnrichFromPackageLock(repoPath, npmSummary); err == nil {
+    npmSummary = enriched
+}
+```
+
+Since the v1 parse "succeeds" (no error, just no useful output), the
+working `package-lock.json` path never runs — reproducing the exact
+"reports the range, not the resolved version" symptom this whole document
+is about, from a different root cause. Confirmed directly:
+`groundtruth_test.go`'s regression check fails with `Version Accuracy: 0.0%`
+when the test copies `yarn.lock` alongside `package-lock.json`, and passes
+once it's excluded — see that test's comment for the full trace.
+
+**Not fixed here.** The automated test copies only `package.json` and
+`package-lock.json` (matching `testdata/fixtures/ground-truth/npm-basic/METHOD.md`,
+which never included `yarn.lock`), so it exercises the scenario this
+document's fix actually targets. Fixing the fallback order itself —
+falling through to `package-lock.json` when yarn enrichment errors *or*
+produces no usable data, and/or having `EnrichFromYarnLock` detect and
+reject unsupported lockfile versions explicitly rather than silently
+extracting nothing — is real follow-up work, tracked here rather than
+fixed as a drive-by change to code this document already touches enough.
+
 ## Separate, out-of-scope limitation noticed in passing
 
 `internal/remote/parsers.go`'s `parsePackageLockJSON` (used by

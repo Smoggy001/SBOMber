@@ -182,6 +182,12 @@ See the fixture's `METHOD.md` for both runs' numbers and what's still not
 covered by this one small fixture (the nested-version case, covered instead
 by dedicated unit tests — see that same design doc).
 
+That comparison is no longer just a one-time snapshot: `go test ./...`
+reruns it automatically (`TestGroundTruthFixturesDoNotRegress`) and fails
+the build if a future change drops any metric below what's committed —
+the same mechanism that would have caught the bug above the moment it was
+reintroduced, rather than requiring someone to notice.
+
 ---
 
 ## Performance

@@ -56,6 +56,24 @@ this directory — nothing in it was edited by hand.
 `sbom-verify-note.txt` is the scorecard `sbomber verify` writes automatically
 next to the generated SBOM; both are committed unedited.
 
+## Automated regression check
+
+The two runs above were captured by hand. Since then,
+`internal/cli/groundtruth_test.go` (`TestGroundTruthFixturesDoNotRegress`)
+automates the same check: it reruns a fresh `sbomber scan` + `sbomber
+verify` against this fixture on every `go test ./...` / `make test` / CI
+run, and fails if any metric drops below what's committed in
+`verify-summary.txt` above. It copies only `package.json` and
+`package-lock.json` from `testdata/fixtures/npm-basic/`, matching the
+method described above — deliberately excluding that source directory's
+`yarn.lock`, which is unrelated to this fixture and would otherwise trigger
+a second, separate bug (see
+`docs/design/npm-identity-reconciliation.md`'s "second bug" section).
+Verified to actually catch a regression, not just pass by construction: it
+was run against a temporarily-reverted `EnrichFromPackageLock` and failed
+with the expected `Version Accuracy: 0.0%` message before the revert was
+undone.
+
 ## Provenance
 
 This fixture was verified twice — before and after the npm package-lock
