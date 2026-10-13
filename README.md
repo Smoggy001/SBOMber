@@ -266,6 +266,8 @@ Reports are saved to `~/.sbomber/reports/`:
 ### HTML Vulnerability Report
 
 Interactive report with:
+- Risk score (0-100%) for every vulnerability, with its breakdown: CVSS ÷ 10 × 40 + EPSS × 25 + CISA KEV 20 + direct dependency 15 / transitive 8.
+  0-20% Secure, 21-39% Low, 40-69% Medium, 70-100% High; overall project risk, per-band counts and a risk filter
 - Severity breakdown (Critical/High/Medium/Low)
 - Direct vs transitive dependency filtering
 - Test data detection (auto-flags fixtures/examples)
