@@ -86,6 +86,22 @@ func flagErrorCode(err error) int {
 	return 2
 }
 
+// pickSBOMForGrype chooses which exported SBOM to hand to Grype: CycloneDX
+// if one was written (sbom-cyclonedx.xml / .json, or *.cdx.*), else the
+// first one.
+func pickSBOMForGrype(paths []string) string {
+	for _, p := range paths {
+		name := strings.ToLower(filepath.Base(p))
+		if strings.Contains(name, "cyclonedx") || strings.Contains(name, ".cdx.") {
+			return p
+		}
+	}
+	if len(paths) > 0 {
+		return paths[0]
+	}
+	return ""
+}
+
 func validateVulnOptions(includeVulns, failOnVuln bool) error {
 	if failOnVuln && !includeVulns {
 		return fmt.Errorf("--fail-on-vuln requires --include-vulnerabilities")
@@ -96,6 +112,7 @@ func validateVulnOptions(includeVulns, failOnVuln bool) error {
 // Main executes the CLI and returns the exit code.
 func Main(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 	if len(args) == 0 {
+		ensureGitHubToken()
 		return runInteractive(stdin, stdout, stderr)
 	}
 
@@ -104,6 +121,7 @@ func Main(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) in
 		_, _ = fmt.Fprintf(stdout, "sbomber %s\n", version)
 		return 0
 	case "scan":
+		ensureGitHubToken()
 		return runScan(args[1:], stdout, stderr)
 	case "github":
 		return runGitHubScan(args[1:], stdout, stderr)
@@ -262,12 +280,13 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
+	ensureGitHubToken()
 	token := os.Getenv("GITHUB_TOKEN")
 	client := github.NewClient(token)
 
 	if !client.HasToken() {
 		_, _ = fmt.Fprintf(stderr, "WARNING: No GITHUB_TOKEN set. Rate limit is 60 requests/hour.\n")
-		_, _ = fmt.Fprintf(stderr, "Set GITHUB_TOKEN for 5000 requests/hour.\n\n")
+		_, _ = fmt.Fprintf(stderr, "Set GITHUB_TOKEN or run `gh auth login` for 5000 requests/hour.\n\n")
 	}
 
 	selectedFormat, err := normalizeExportFormat(*format)
@@ -326,13 +345,8 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		} else {
 			for _, p := range savedPaths {
 				_, _ = fmt.Fprintf(stdout, "  Exported: %s\n", p)
-				// Prefer CycloneDX for vulnerability scanning
-				if strings.HasSuffix(p, ".cdx.xml") {
-					sbomPath = p
-				} else if sbomPath == "" && strings.HasSuffix(p, ".spdx") {
-					sbomPath = p
-				}
 			}
+			sbomPath = pickSBOMForGrype(savedPaths)
 		}
 
 		// Collect health metrics if requested
@@ -1057,12 +1071,8 @@ func runGitLabScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		} else {
 			for _, p := range savedPaths {
 				_, _ = fmt.Fprintf(stdout, "  Exported: %s\n", p)
-				if strings.HasSuffix(p, ".cdx.xml") || strings.HasSuffix(p, ".cdx.json") {
-					sbomPath = p
-				} else if sbomPath == "" {
-					sbomPath = p
-				}
 			}
+			sbomPath = pickSBOMForGrype(savedPaths)
 		}
 
 		var healthMetrics []*health.DependencyHealth
@@ -1868,7 +1878,8 @@ Examples:
   sbomber diff v1.0.cdx.xml v1.1.cdx.xml
 
 Environment:
-  GITHUB_TOKEN    GitHub personal access token (recommended for higher rate limits)
+  GITHUB_TOKEN    GitHub personal access token (recommended for higher rate limits;
+                  if unset, the GitHub CLI's login from 'gh auth login' is used)
   GITLAB_TOKEN    GitLab personal access token
 `)
 }
