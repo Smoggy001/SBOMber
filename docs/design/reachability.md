@@ -7,10 +7,9 @@ Owner: Sadman (Component 1).
 This implements the "is the vulnerable function actually called, not just
 present" idea from the reachability spec — for **Go only**, as a narrow,
 real, tested slice rather than the spec's full multi-language engine.
-`internal/reachability` is a **library**, not a CLI command: nothing in
-`sbomber scan`/`sbomber github`/`sbomber gitlab` calls it yet. Wiring it
-into the CLI (a `--reachability` flag, or folding it into
-`--include-vulnerabilities`) is follow-up work, not done here.
+It is exposed as its own command, `sbomber reachability [path]` (see
+[Risk score](#risk-score-called-functions-only) below); `sbomber
+scan`/`github`/`gitlab` do not call it yet.
 
 ## Why govulncheck, not a hand-built call-graph engine
 
@@ -75,6 +74,42 @@ expose that distinction directly in `-json` output the way it exposes
 subset: MEDIUM fires on "the analysis itself was less confident," not on
 every kind of ambiguity the spec describes.
 
+The scanned module is the unversioned entry in `SBOM.modules` that
+contains `SBOM.roots[0]`. `roots` lists root **packages**, not the module:
+they only coincide for a single-package module like the fixtures. Using
+`roots[0]` directly made every direct call in a multi-package repo (this
+one included) classify as HIGH instead of CRITICAL;
+`TestMainModuleFromMultiPackageRoots` guards against that.
+
+## Risk score (called functions only)
+
+`sbomber reachability` scores each vulnerable function the call graph
+shows is **called** (CRITICAL or HIGH above) from 0 to 100%. Vulnerable
+code that is present but never called (LOW, MEDIUM) is listed but not
+scored. The parts add up to exactly 100:
+
+| Part | Formula | Max | Source |
+|---|---|---|---|
+| Severity | CVSS base score ÷ 10 × 40 | 40 | NVD CVE API 2.0 (v3.1 → v3.0 → v4.0 → v2, NVD's Primary score first) |
+| Exploit chance | EPSS probability × 25 | 25 | FIRST.org EPSS |
+| Known exploited | listed in CISA KEV | 20 | CISA KEV catalog |
+| Call proximity | app code calls it directly (CRITICAL) = 15, via a dependency (HIGH) = 8 | 15 | the call graph |
+
+Bands: **0–20% Secure**, **21–39% Low**, **40–69% Medium**, **70–100% High**.
+The project's overall risk is its riskiest called function.
+
+- govulncheck reports Go IDs (`GO-YYYY-NNNN`); the OSV entry's `CVE-`
+  aliases are what CVSS/EPSS/KEV are looked up by. With several aliases,
+  the highest CVSS and EPSS are used, and KEV counts if any alias is in it.
+- CVSS comes from NVD, not GHSA: GHSA's reviewed advisories don't cover
+  most recent Go standard-library CVEs (checked directly for
+  CVE-2026-33814: GHSA returned `[]`, NVD returned 7.5). NVD allows 5
+  requests per 30s without a key, so lookups are paced and cached for 24h
+  in `~/.sbomber/nvd_cache.json`; set `NVD_API_KEY` to go faster.
+- When no CVSS is found (e.g. a CVE NVD hasn't analyzed yet), severity
+  assumes 5.0 rather than 0 and the output says so, so an unrated
+  vulnerability is never reported as harmless.
+
 ## Fixture: fully offline, no network dependency
 
 `testdata/fixtures/reachability/` is a small, self-contained scenario:
@@ -128,7 +163,9 @@ would need resolving first — not assumed away.
 
 ## Requirements
 
-`govulncheck` must be on `PATH` (`IsGovulncheckAvailable`); if it isn't,
+`govulncheck` must be on `PATH` or in the Go bin directory (`$GOBIN`, else
+`$GOPATH/bin`, default `~/go/bin`, which `go install` writes to but which
+often isn't on `PATH`, especially on Windows) (`IsGovulncheckAvailable`); if it isn't,
 `Analyze` returns a clear error rather than a silent skip, matching how
 missing Grype is now handled (CO-1). Install with
 `go install golang.org/x/vuln/cmd/govulncheck@latest`. CI installs it the

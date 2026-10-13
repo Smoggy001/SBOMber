@@ -3,7 +3,9 @@ package reachability
 import (
 	"context"
 	"net/url"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -72,6 +74,56 @@ func TestAnalyzeDirectCallIsCritical(t *testing.T) {
 	if !f.Reachable {
 		t.Error("expected Reachable to be true")
 	}
+	if len(f.CVEs) != 1 || f.CVEs[0] != "CVE-9999-00001" {
+		t.Errorf("expected CVEs [CVE-9999-00001], got %v", f.CVEs)
+	}
+	if f.Symbol != "example.com/sbomber-reachability/vendorpkg.Vulnerable" {
+		t.Errorf("unexpected Symbol %q", f.Symbol)
+	}
+	if len(f.CallPath) != 2 {
+		t.Fatalf("expected a 2-frame call path (main -> Vulnerable), got %+v", f.CallPath)
+	}
+	if entry := f.CallPath[0]; !entry.InApp || entry.Name() != "sbomber-reachability-app-critical.main" || entry.Location() != "main.go:6" {
+		t.Errorf("unexpected entry frame %+v (name %q, location %q)", entry, entry.Name(), entry.Location())
+	}
+	if vuln := f.CallPath[1]; vuln.InApp || vuln.Name() != "vendorpkg.Vulnerable" {
+		t.Errorf("unexpected vulnerable frame %+v", vuln)
+	}
+}
+
+// TestMainModuleFromMultiPackageRoots: for a module with many packages,
+// govulncheck's SBOM roots are the scanned packages, not the module, so
+// the root module must come from the unversioned entry in modules.
+// Taking roots[0] verbatim made every direct call from a real repo look
+// like it came from a dependency.
+func TestMainModuleFromMultiPackageRoots(t *testing.T) {
+	output := []byte(`{"config":{"scan_level":"symbol"}}
+{"SBOM":{"modules":[{"path":"github.com/acme/app"},{"path":"github.com/acme/app/tools"},{"path":"golang.org/x/net","version":"v0.1.0"},{"path":"stdlib","version":"v1.26.2"}],
+"roots":["github.com/acme/app/internal/deps","github.com/acme/app/cmd/app"]}}
+{"osv":{"id":"GO-1","aliases":["CVE-1","GHSA-x"]}}
+{"finding":{"osv":"GO-1","trace":[{"module":"stdlib","package":"net/http","function":"Get","position":{"filename":"src/net/http/client.go","line":484}},{"module":"github.com/acme/app","package":"github.com/acme/app/internal/deps","function":"Fetch","receiver":"*Resolver","position":{"filename":"internal/deps/fetch.go","line":12}}]}}
+`)
+	rootModule, symbolLevel, osvs, byOSV, err := parseGovulncheckOutput(output)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if rootModule != "github.com/acme/app" {
+		t.Fatalf("rootModule = %q, want github.com/acme/app", rootModule)
+	}
+
+	f := classify("GO-1", osvs["GO-1"], byOSV["GO-1"], rootModule, symbolLevel)
+	if f.Tier != TierCritical {
+		t.Errorf("expected TierCritical for a direct call from app code, got %q", f.Tier)
+	}
+	if len(f.CVEs) != 1 || f.CVEs[0] != "CVE-1" {
+		t.Errorf("expected only the CVE alias, got %v", f.CVEs)
+	}
+	if f.Symbol != "net/http.Get" {
+		t.Errorf("Symbol = %q, want net/http.Get", f.Symbol)
+	}
+	if got := f.CallPath[0]; got.Name() != "deps.Resolver.Fetch" || got.Location() != "internal/deps/fetch.go:12" || !got.InApp {
+		t.Errorf("unexpected caller frame %+v", got)
+	}
 }
 
 // TestAnalyzeTransitiveCallIsHigh: main calls a dependency function
@@ -129,11 +181,33 @@ func TestAnalyzeImportedButUncalledIsLow(t *testing.T) {
 	}
 }
 
+// TestGovulncheckFoundInGoBinWhenNotOnPath: `go install` puts govulncheck
+// in $GOBIN or $GOPATH/bin, which is often not on PATH.
+func TestGovulncheckFoundInGoBinWhenNotOnPath(t *testing.T) {
+	gobin := t.TempDir()
+	name := "govulncheck"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	if err := os.WriteFile(filepath.Join(gobin, name), []byte{}, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", t.TempDir())
+	t.Setenv("GOBIN", gobin)
+
+	if got := govulncheckPath(); got != filepath.Join(gobin, name) {
+		t.Errorf("govulncheckPath() = %q, want the copy in GOBIN", got)
+	}
+}
+
 // TestAnalyzeMissingGovulncheckIsError is the failure/unknown-path case:
 // govulncheck not being installed must return a clear error, matching how
 // internal/vulnerability.ScanWithGrype fails when Grype is missing.
 func TestAnalyzeMissingGovulncheckIsError(t *testing.T) {
 	t.Setenv("PATH", t.TempDir())
+	// Also hide the Go bin directory fallback.
+	t.Setenv("GOBIN", "")
+	t.Setenv("GOPATH", t.TempDir())
 
 	_, err := Analyze(context.Background(), ".")
 	if err == nil {

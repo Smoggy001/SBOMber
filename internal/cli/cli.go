@@ -41,10 +41,14 @@ import (
 const version = "0.1.0"
 
 var (
-	colorReset = "\033[0m"
-	colorCyan  = "\033[36m"
-	colorBlue  = "\033[34m"
-	colorBold  = "\033[1m"
+	colorReset  = "\033[0m"
+	colorCyan   = "\033[36m"
+	colorBlue   = "\033[34m"
+	colorBold   = "\033[1m"
+	colorRed    = "\033[31m"
+	colorYellow = "\033[33m"
+	colorGreen  = "\033[32m"
+	colorDim    = "\033[2m"
 )
 
 const (
@@ -59,12 +63,20 @@ func setColorOutput(enabled bool) {
 		colorCyan = "\033[36m"
 		colorBlue = "\033[34m"
 		colorBold = "\033[1m"
+		colorRed = "\033[31m"
+		colorYellow = "\033[33m"
+		colorGreen = "\033[32m"
+		colorDim = "\033[2m"
 		return
 	}
 	colorReset = ""
 	colorCyan = ""
 	colorBlue = ""
 	colorBold = ""
+	colorRed = ""
+	colorYellow = ""
+	colorGreen = ""
+	colorDim = ""
 }
 
 func flagErrorCode(err error) int {
@@ -99,6 +111,8 @@ func Main(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) in
 		return runGitLabScan(args[1:], stdout, stderr)
 	case "trace":
 		return runTrace(args[1:], stdout, stderr)
+	case "reachability":
+		return runReachability(args[1:], stdout, stderr)
 	case "verify":
 		return runVerify(args[1:], stdout, stderr)
 	case "diff":
@@ -1763,6 +1777,7 @@ Usage:
   sbomber github [--health] [--include-vulnerabilities] [--fail-on-vuln] [--format FORMAT] <repo-url>...
   sbomber gitlab [--health] [--include-vulnerabilities] [--fail-on-vuln] [--format FORMAT] [--instance URL] <repo-url>...
   sbomber trace <path> [package-name] [flags] [--no-color]
+  sbomber reachability [path] [--json] [--no-color]
   sbomber verify <ground-truth-sbom> <generated-sbom> [--json]
   sbomber diff <old-sbom> <new-sbom> [--no-color]
   sbomber localise --canonical-scan <canonical-scan.json> [--out localisation.json] [--trace trace.json]
@@ -1831,6 +1846,13 @@ VEX Flags (Component 3: OpenVEX 0.2.0 from decision-results.json):
   --out <file>                          OpenVEX document to write (default: vex.openvex.json)
   usage_detected -> affected only when explicitly mapped by the decision; otherwise under_investigation.
   no_usage_detected and unknown -> under_investigation, unsupported -> omitted. not_affected is rejected by the committed exporter.
+
+Reachability (Go only, needs govulncheck):
+  Scores only the vulnerable functions your code actually calls, 0-100%,
+  from CVSS (NVD), EPSS, CISA KEV and how directly the call is made.
+  0-20% Secure, 21-39% Low, 40-69% Medium, 70-100% High.
+  --json                                Output results as JSON
+  --db <url>                            Vulnerability database (default: https://vuln.go.dev)
 
 Examples:
   sbomber

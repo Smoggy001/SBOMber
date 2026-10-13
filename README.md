@@ -162,6 +162,24 @@ the registry's integrity value, read in memory, and every artefact records
 `executed: false`. The output follows `contracts/localisation.schema.json`.
 Measured behaviour on ten curated CVEs is in `spikes/localisation/`.
 
+### Vulnerability Reachability (Go)
+
+Uses govulncheck's call graph to find the vulnerable functions your code
+actually calls, and scores only those, 0-100%: severity (CVSS from NVD, up
+to 40) + exploit chance (EPSS, up to 25) + known exploited (CISA KEV, +20) +
+call proximity (your code calls it +15, via a dependency +8).
+0-20% Secure, 21-39% Low, 40-69% Medium, 70-100% High.
+
+```bash
+go install golang.org/x/vuln/cmd/govulncheck@latest   # one-time
+
+./bin/sbomber reachability .          # call paths, file:line, score breakdown
+./bin/sbomber reachability . --json   # for CI
+```
+
+Set `NVD_API_KEY` for faster CVSS lookups (results are cached for 24h).
+See [docs/design/reachability.md](docs/design/reachability.md).
+
 ### SBOM Verification
 
 Compare your generated SBOM against a ground truth to measure accuracy.
