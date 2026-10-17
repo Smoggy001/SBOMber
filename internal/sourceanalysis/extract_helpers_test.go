@@ -22,7 +22,8 @@ func TestUnquoteJavaScriptString(t *testing.T) {
 		{name: "single-quoted, package subpath", value: `'lodash/template'`, want: "lodash/template"},
 		{name: "single-quoted, scoped package", value: `'@babel/parser'`, want: "@babel/parser"},
 		{name: "single-quoted, single character", value: `'a'`, want: "a"},
-		{name: "backtick-quoted", value: "`lodash`", want: "lodash"},
+		// Template literals are never import specifiers.
+		{name: "backtick-quoted", value: "`lodash`", wantErr: true},
 		{name: "escaped single quote inside single-quoted string", value: `'it\'s-fine'`, want: "it's-fine"},
 		{name: "escaped double quote inside double-quoted string", value: `"say \"hi\""`, want: `say "hi"`},
 		{name: "escaped backslash", value: `'a\\b'`, want: `a\b`},
