@@ -377,7 +377,10 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		ghsaCtx, ghsaCancel := context.WithTimeout(context.Background(), 120*time.Second)
 		ghsaResults, ghsaErr := vulnerability.ScanPackagesWithGHSA(ghsaCtx, pkgRefs)
 		ghsaCancel()
-		if ghsaErr != nil || ghsaResults == nil {
+		if ghsaErr != nil {
+			_, _ = fmt.Fprintf(stderr, "  GitHub Advisory scan failed: %v\n", ghsaErr)
+		}
+		if ghsaResults == nil {
 			ghsaResults = &vulnerability.ScanResults{Vulnerabilities: make([]vulnerability.VulnerabilityResult, 0)}
 		}
 		if ghsaResults.TotalCount > 0 {
@@ -421,6 +424,11 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 				}
 				vulnResults.TotalCount = len(vulnResults.Vulnerabilities)
 			}
+		}
+		// The package scan's own status travels with the merged results, so
+		// the report and the summary below show it next to the other sources.
+		if vulnResults != nil && vulnResults != ghsaResults {
+			vulnResults.NetworkStatus = append(vulnResults.NetworkStatus, ghsaResults.NetworkStatus...)
 		}
 
 		// Generate report (combined if we have both, otherwise just what we have)

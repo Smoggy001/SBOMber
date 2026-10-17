@@ -30,6 +30,9 @@ const (
 	// RateLimited means the source responded but refused the request
 	// because of a rate limit (HTTP 429, or a source-specific equivalent).
 	RateLimited Status = "rate_limited"
+	// Partial means some requests to the source succeeded and others failed:
+	// the data present is real, but some of it is missing.
+	Partial Status = "partial"
 	// Skipped means no attempt was made at all — nothing needed the source
 	// this run (e.g. zero CVEs to look up), or it was disabled.
 	Skipped Status = "skipped"
@@ -40,9 +43,10 @@ const (
 var severity = map[Status]int{
 	Success:     0,
 	Skipped:     1,
-	RateLimited: 2,
-	TimedOut:    3,
-	Unavailable: 4,
+	Partial:     2,
+	RateLimited: 3,
+	TimedOut:    4,
+	Unavailable: 5,
 }
 
 // Worse returns whichever of a and b represents the more serious outcome.
@@ -66,11 +70,11 @@ func Worse(a, b Status) Status {
 type Report struct {
 	// Source names the data source, e.g. "epss", "kev", "ghsa",
 	// "npm_registry", "malware".
-	Source string
-	Status Status
+	Source string `json:"source"`
+	Status Status `json:"status"`
 	// Detail is a short, plain-language reason, populated when Status is
 	// not Success (e.g. the underlying error message). Empty on success.
-	Detail string
+	Detail string `json:"detail,omitempty"`
 }
 
 // Collector accumulates Reports from concurrent goroutines.
@@ -125,4 +129,15 @@ func ClassifyHTTPStatus(code int) Status {
 	default:
 		return Unavailable
 	}
+}
+
+// ClassifyResponse is ClassifyHTTPStatus that also reads the headers: GitHub
+// answers an exhausted quota with 403 and X-RateLimit-Remaining: 0 (or, for
+// its secondary limits, 403 with Retry-After), not with 429.
+func ClassifyResponse(resp *http.Response) Status {
+	if resp.StatusCode == http.StatusForbidden &&
+		(resp.Header.Get("X-RateLimit-Remaining") == "0" || resp.Header.Get("Retry-After") != "") {
+		return RateLimited
+	}
+	return ClassifyHTTPStatus(resp.StatusCode)
 }

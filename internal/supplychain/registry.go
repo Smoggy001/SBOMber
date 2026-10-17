@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Xsamsx/SBOMber/internal/netstatus"
@@ -35,18 +36,16 @@ type RegistrySignals struct {
 	DeprecatedNote  string
 }
 
-// npmPackageDoc is the subset of the npm registry's package document
-// (GET /<name>) this package reads.
-type npmPackageDoc struct {
-	DistTags struct {
-		Latest string `json:"latest"`
-	} `json:"dist-tags"`
+// npmVersionDoc is the subset of one version's registry document
+// (GET /<name>/<version>) this package reads. The full package document
+// (GET /<name>) lists every version ever published and runs to tens of
+// megabytes for popular packages, so it is never fetched.
+type npmVersionDoc struct {
+	Version     string `json:"version"`
+	Deprecated  string `json:"deprecated"`
 	Maintainers []struct {
 		Name string `json:"name"`
 	} `json:"maintainers"`
-	Versions map[string]struct {
-		Deprecated string `json:"deprecated"`
-	} `json:"versions"`
 }
 
 // npmDownloadsDoc is the response shape of the npm downloads API.
@@ -56,8 +55,8 @@ type npmDownloadsDoc struct {
 
 // FetchNpmRegistrySignals fetches maintainer count, weekly downloads, and
 // the deprecated flag for an npm package from the public npm registry. When
-// version is non-empty, the deprecated flag is read from that exact
-// version; otherwise the dist-tags "latest" version is used.
+// version is non-empty, the maintainers and deprecated flag are read from
+// that exact version's document; otherwise from the "latest" version's.
 //
 // Both the package-metadata and downloads requests are attempted even if
 // one fails, so a single unavailable endpoint does not hide data the other
@@ -82,7 +81,11 @@ func FetchNpmRegistrySignals(ctx context.Context, name, version string) (*Regist
 }
 
 func fetchNpmPackageMeta(ctx context.Context, name, version string, signals *RegistrySignals) (netstatus.Status, error) {
-	reqURL := npmRegistryBaseURL + "/" + url.PathEscape(name)
+	target := version
+	if target == "" {
+		target = "latest"
+	}
+	reqURL := npmRegistryBaseURL + "/" + npmPathName(name) + "/" + url.PathEscape(target)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		return netstatus.Unavailable, err
@@ -96,31 +99,38 @@ func fetchNpmPackageMeta(ctx context.Context, name, version string, signals *Reg
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return netstatus.ClassifyHTTPStatus(resp.StatusCode), fmt.Errorf("npm registry lookup for %s: HTTP %d", name, resp.StatusCode)
+		return netstatus.ClassifyResponse(resp), fmt.Errorf("npm registry lookup for %s@%s: HTTP %d", name, target, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponseBytes))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponseBytes+1))
 	if err != nil {
 		return netstatus.Unavailable, err
 	}
+	if len(body) > maxRegistryResponseBytes {
+		return netstatus.Unavailable, fmt.Errorf("npm registry lookup for %s@%s: response exceeds %d bytes", name, target, maxRegistryResponseBytes)
+	}
 
-	var doc npmPackageDoc
+	var doc npmVersionDoc
 	if err := json.Unmarshal(body, &doc); err != nil {
 		return netstatus.Unavailable, err
 	}
 
 	signals.MaintainerCount = len(doc.Maintainers)
-
-	target := version
-	if target == "" {
-		target = doc.DistTags.Latest
-	}
-	if v, ok := doc.Versions[target]; ok && v.Deprecated != "" {
+	if doc.Deprecated != "" {
 		signals.Deprecated = true
-		signals.DeprecatedNote = v.Deprecated
+		signals.DeprecatedNote = doc.Deprecated
 	}
 
 	return netstatus.Success, nil
+}
+
+// npmPathName escapes a package name for a registry URL path, keeping the
+// scope separator: "@babel/core" is requested as /@babel/core/<version>.
+func npmPathName(name string) string {
+	if scope, rest, ok := strings.Cut(name, "/"); ok && strings.HasPrefix(scope, "@") {
+		return url.PathEscape(scope) + "/" + url.PathEscape(rest)
+	}
+	return url.PathEscape(name)
 }
 
 func fetchNpmWeeklyDownloads(ctx context.Context, name string, signals *RegistrySignals) (netstatus.Status, error) {
@@ -144,7 +154,7 @@ func fetchNpmWeeklyDownloads(ctx context.Context, name string, signals *Registry
 		return netstatus.Success, nil
 	}
 	if resp.StatusCode != http.StatusOK {
-		return netstatus.ClassifyHTTPStatus(resp.StatusCode), fmt.Errorf("npm downloads lookup for %s: HTTP %d", name, resp.StatusCode)
+		return netstatus.ClassifyResponse(resp), fmt.Errorf("npm downloads lookup for %s: HTTP %d", name, resp.StatusCode)
 	}
 
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponseBytes))
@@ -162,4 +172,4 @@ func fetchNpmWeeklyDownloads(ctx context.Context, name string, signals *Registry
 }
 
 // maxRegistryResponseBytes bounds how much of a registry response is read.
-const maxRegistryResponseBytes = 4 << 20
+const maxRegistryResponseBytes = 4 << 20 // a version document is a few KiB

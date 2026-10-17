@@ -66,3 +66,29 @@ func TestCollector(t *testing.T) {
 		t.Errorf("expected kev report to carry TimedOut status and a detail, got %+v", reports[1])
 	}
 }
+
+func TestClassifyResponse(t *testing.T) {
+	resp := func(code int, headers map[string]string) *http.Response {
+		r := &http.Response{StatusCode: code, Header: http.Header{}}
+		for k, v := range headers {
+			r.Header.Set(k, v)
+		}
+		return r
+	}
+	tests := []struct {
+		name string
+		resp *http.Response
+		want Status
+	}{
+		{"github quota exhausted", resp(403, map[string]string{"X-RateLimit-Remaining": "0"}), RateLimited},
+		{"github secondary limit", resp(403, map[string]string{"Retry-After": "60"}), RateLimited},
+		{"plain forbidden", resp(403, map[string]string{"X-RateLimit-Remaining": "4999"}), Unavailable},
+		{"429", resp(429, nil), RateLimited},
+		{"ok", resp(200, nil), Success},
+	}
+	for _, tt := range tests {
+		if got := ClassifyResponse(tt.resp); got != tt.want {
+			t.Errorf("%s: ClassifyResponse = %v, want %v", tt.name, got, tt.want)
+		}
+	}
+}

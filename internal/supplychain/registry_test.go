@@ -30,17 +30,11 @@ func withMockRegistry(t *testing.T, registryHandler, downloadsHandler http.Handl
 func TestFetchNpmRegistrySignalsSuccess(t *testing.T) {
 	withMockRegistry(t,
 		func(w http.ResponseWriter, r *http.Request) {
-			doc := npmPackageDoc{}
-			doc.DistTags.Latest = "1.2.3"
-			doc.Maintainers = []struct {
-				Name string `json:"name"`
-			}{{Name: "alice"}, {Name: "bob"}}
-			doc.Versions = map[string]struct {
-				Deprecated string `json:"deprecated"`
-			}{
-				"1.2.3": {Deprecated: ""},
+			// The version document, never the full package document.
+			if r.URL.Path != "/left-pad/latest" {
+				t.Errorf("registry path = %q, want /left-pad/latest", r.URL.Path)
 			}
-			_ = json.NewEncoder(w).Encode(doc)
+			_, _ = w.Write([]byte(`{"version":"1.2.3","maintainers":[{"name":"alice"},{"name":"bob"}]}`))
 		},
 		func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(npmDownloadsDoc{Downloads: 42000})
@@ -68,14 +62,7 @@ func TestFetchNpmRegistrySignalsSuccess(t *testing.T) {
 func TestFetchNpmRegistrySignalsDeprecated(t *testing.T) {
 	withMockRegistry(t,
 		func(w http.ResponseWriter, r *http.Request) {
-			doc := npmPackageDoc{}
-			doc.DistTags.Latest = "2.0.0"
-			doc.Versions = map[string]struct {
-				Deprecated string `json:"deprecated"`
-			}{
-				"2.0.0": {Deprecated: "use package-b instead"},
-			}
-			_ = json.NewEncoder(w).Encode(doc)
+			_, _ = w.Write([]byte(`{"version":"2.0.0","deprecated":"use package-b instead"}`))
 		},
 		func(w http.ResponseWriter, r *http.Request) {
 			_ = json.NewEncoder(w).Encode(npmDownloadsDoc{Downloads: 5})
@@ -140,9 +127,7 @@ func TestFetchNpmRegistrySignalsRateLimited(t *testing.T) {
 func TestFetchNpmRegistrySignalsMissingDownloadHistory(t *testing.T) {
 	withMockRegistry(t,
 		func(w http.ResponseWriter, r *http.Request) {
-			doc := npmPackageDoc{}
-			doc.DistTags.Latest = "0.0.1"
-			_ = json.NewEncoder(w).Encode(doc)
+			_, _ = w.Write([]byte(`{"version":"0.0.1"}`))
 		},
 		func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
@@ -171,5 +156,46 @@ func TestCheckMalwareReportsSkipped(t *testing.T) {
 	}
 	if report.Detail == "" {
 		t.Error("expected a detail explaining why malware scanning was skipped")
+	}
+}
+
+func TestFetchNpmRegistrySignalsRequestsTheExactVersion(t *testing.T) {
+	var gotPath string
+	withMockRegistry(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			gotPath = r.URL.EscapedPath()
+			_, _ = w.Write([]byte(`{"version":"7.24.0","deprecated":"security fix in 7.24.1","maintainers":[{"name":"a"}]}`))
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(npmDownloadsDoc{Downloads: 1})
+		},
+	)
+
+	signals, _, err := FetchNpmRegistrySignals(context.Background(), "@babel/core", "7.24.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if gotPath != "/@babel/core/7.24.0" {
+		t.Errorf("registry path = %q, want /@babel/core/7.24.0", gotPath)
+	}
+	if !signals.Deprecated || signals.MaintainerCount != 1 {
+		t.Errorf("signals = %+v, want deprecated with 1 maintainer", signals)
+	}
+}
+
+func TestFetchNpmRegistrySignalsGitHubStyleRateLimit(t *testing.T) {
+	withMockRegistry(t,
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-RateLimit-Remaining", "0")
+			w.WriteHeader(http.StatusForbidden)
+		},
+		func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewEncoder(w).Encode(npmDownloadsDoc{Downloads: 1})
+		},
+	)
+
+	_, status, err := FetchNpmRegistrySignals(context.Background(), "left-pad", "")
+	if err == nil || status != netstatus.RateLimited {
+		t.Errorf("status = %v, err = %v; want rate_limited with an error", status, err)
 	}
 }
