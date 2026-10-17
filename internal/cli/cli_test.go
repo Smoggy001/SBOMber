@@ -346,3 +346,13 @@ func mustWriteFile(t *testing.T, path string, parts ...string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+// An unreadable scan path is a tool error (2), not "vulnerabilities found"
+// (1): CI policy gates, such as the GitHub Action, rely on the difference.
+func TestScanMissingPathIsToolError(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	var stdout, stderr bytes.Buffer
+	if code := Main([]string{"scan", "--no-color", "--", missing}, strings.NewReader(""), &stdout, &stderr); code != 2 {
+		t.Fatalf("exit code = %d, want 2; stderr=%q", code, stderr.String())
+	}
+}

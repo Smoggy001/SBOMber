@@ -28,8 +28,8 @@ inputs:
     default: "true"
   fail-on-vuln:
     description: >-
-      Fail the step (non-zero exit) when vulnerabilities are found. Has no
-      effect when include-vulnerabilities is false.
+      Fail the step (exit 1) when vulnerabilities are found. Has no effect
+      when include-vulnerabilities is false.
     required: false
     default: "true"
   no-color:
@@ -43,6 +43,16 @@ inputs:
       field) to raise GitHub API rate limits; omit to run unauthenticated.
     required: false
     default: ""
+  grype-version:
+    description: "Grype release to install (a tag, e.g. v0.120.1)."
+    required: false
+    default: "v0.120.1"
+  artifact-name:
+    description: >-
+      Name of the uploaded artifact. Change it when one job runs the action
+      more than once (artifact names must be unique per run).
+    required: false
+    default: "sbomber-report"
 
 outputs:
   exit-code:
@@ -59,71 +69,109 @@ runs:
       uses: actions/setup-go@v5
       with:
         go-version-file: "${{ github.action_path }}/go.mod"
+        cache-dependency-path: "${{ github.action_path }}/go.sum"
 
     - name: Install Grype
       if: ${{ inputs.include-vulnerabilities == 'true' }}
       shell: bash
+      env:
+        GRYPE_VERSION: ${{ inputs.grype-version }}
       run: |
-        curl -sSfL https://raw.githubusercontent.com/anchore/grype/main/install.sh \
-          | sh -s -- -b "$RUNNER_TEMP/bin"
-        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        case "$GRYPE_VERSION" in
+          v[0-9]*.[0-9]*.[0-9]*) ;;
+          *) echo "::error::grype-version must be a release tag like v0.120.1, got '$GRYPE_VERSION'"; exit 2 ;;
+        esac
+        mkdir -p "$RUNNER_TEMP/sbomber-bin"
+        # The install script is pinned to the same tag; it verifies the
+        # release checksum before installing.
+        curl -sSfL "https://raw.githubusercontent.com/anchore/grype/${GRYPE_VERSION}/install.sh" \
+          | sh -s -- -b "$RUNNER_TEMP/sbomber-bin" "$GRYPE_VERSION"
+        echo "$RUNNER_TEMP/sbomber-bin" >> "$GITHUB_PATH"
+
+    - name: Install govulncheck
+      # Used for Go call-graph reachability when vulnerabilities are scanned.
+      if: ${{ inputs.include-vulnerabilities == 'true' }}
+      shell: bash
+      run: |
+        GOBIN="$RUNNER_TEMP/sbomber-bin" go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
+        echo "$RUNNER_TEMP/sbomber-bin" >> "$GITHUB_PATH"
 
     - name: Build SBOMber
       shell: bash
+      # Build from the action's own checkout, not the caller's workspace, so
+      # `uses: fluxsecurity/SBOMber@<ref>` works from any repository.
+      working-directory: ${{ github.action_path }}
       env:
         CGO_ENABLED: "1"
       run: |
-        go build -o "$RUNNER_TEMP/bin/sbomber" "${{ github.action_path }}/cmd/sbomber"
-        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+        mkdir -p "$RUNNER_TEMP/sbomber-bin"
+        go build -o "$RUNNER_TEMP/sbomber-bin/sbomber" ./cmd/sbomber
+        echo "$RUNNER_TEMP/sbomber-bin" >> "$GITHUB_PATH"
 
     - name: Run SBOMber scan
       id: scan
       shell: bash
+      # Inputs arrive as environment variables, never pasted into the
+      # script, so a value like a branch name cannot inject shell commands.
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
-      # The scan can legitimately exit 1 (vulnerabilities found, policy
-      # violation) or 2 (tool error) — continue so the summary and artifact
-      # steps still run, then fail the job for real in the final step below.
-      continue-on-error: true
+        SCAN_PATH: ${{ inputs.scan-path }}
+        SCAN_FORMAT: ${{ inputs.format }}
+        INCLUDE_VULNS: ${{ inputs.include-vulnerabilities }}
+        FAIL_ON_VULN: ${{ inputs.fail-on-vuln }}
+        NO_COLOR_OUTPUT: ${{ inputs.no-color }}
       run: |
-        set -o pipefail
-
-        args=(scan "${{ inputs.scan-path }}" --format "${{ inputs.format }}")
-        if [ "${{ inputs.include-vulnerabilities }}" = "true" ]; then
+        # Flags must come before the path: Go's flag parsing stops at the
+        # first positional argument, and "--" ends the flags explicitly.
+        args=(scan --format "$SCAN_FORMAT")
+        if [ "$INCLUDE_VULNS" = "true" ]; then
           args+=(--include-vulnerabilities)
         fi
-        if [ "${{ inputs.fail-on-vuln }}" = "true" ]; then
+        if [ "$FAIL_ON_VULN" = "true" ]; then
           args+=(--fail-on-vuln)
         fi
-        if [ "${{ inputs.no-color }}" = "true" ]; then
+        if [ "$NO_COLOR_OUTPUT" = "true" ]; then
           args+=(--no-color)
         fi
+        args+=(-- "$SCAN_PATH")
 
-        sbomber "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/sbomber-scan.log"
-        exit_code="${PIPESTATUS[0]}"
+        # The runner runs this with -e -o pipefail: turn -e off around the
+        # scan so a non-zero exit is recorded instead of ending the script.
+        set +e
+        "$RUNNER_TEMP/sbomber-bin/sbomber" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/sbomber-scan.log"
+        scan_exit="${PIPESTATUS[0]}"
+        set -e
 
-        echo "exit-code=$exit_code" >> "$GITHUB_OUTPUT"
+        echo "exit-code=$scan_exit" >> "$GITHUB_OUTPUT"
         echo "report-dir=$HOME/.sbomber/reports" >> "$GITHUB_OUTPUT"
-        exit "$exit_code"
+        # Always succeed here; "Apply scan result" fails the step after the
+        # summary and artifacts have been written.
+        exit 0
 
     - name: Write job summary
       if: ${{ always() }}
       shell: bash
+      env:
+        SCAN_EXIT: ${{ steps.scan.outputs.exit-code }}
+        SCAN_PATH: ${{ inputs.scan-path }}
+        SCAN_FORMAT: ${{ inputs.format }}
+        INCLUDE_VULNS: ${{ inputs.include-vulnerabilities }}
+        FAIL_ON_VULN: ${{ inputs.fail-on-vuln }}
       run: |
         {
           echo "## SBOMber scan"
           echo
-          case "${{ steps.scan.outputs.exit-code }}" in
+          case "$SCAN_EXIT" in
             0) echo "**Result:** :white_check_mark: clean" ;;
             1) echo "**Result:** :warning: vulnerabilities found (fail-on-vuln policy)" ;;
             2) echo "**Result:** :x: tool/usage error" ;;
-            *) echo "**Result:** unknown exit code \`${{ steps.scan.outputs.exit-code }}\`" ;;
+            *) echo "**Result:** :x: the scan did not run" ;;
           esac
           echo
-          echo "- Scan path: \`${{ inputs.scan-path }}\`"
-          echo "- Format: \`${{ inputs.format }}\`"
-          echo "- Vulnerability scanning: \`${{ inputs.include-vulnerabilities }}\`"
-          echo "- Fail on vulnerabilities: \`${{ inputs.fail-on-vuln }}\`"
+          echo "- Scan path: \`$SCAN_PATH\`"
+          echo "- Format: \`$SCAN_FORMAT\`"
+          echo "- Vulnerability scanning: \`$INCLUDE_VULNS\`"
+          echo "- Fail on vulnerabilities: \`$FAIL_ON_VULN\`"
           echo
           echo "<details><summary>Full scan output</summary>"
           echo
@@ -134,13 +182,17 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
     - name: Upload SBOMber artifacts
-      if: ${{ always() }}
+      if: ${{ always() && steps.scan.outputs.report-dir != '' }}
       uses: actions/upload-artifact@v4
       with:
-        name: sbomber-report
+        name: ${{ inputs.artifact-name }}
         path: ${{ steps.scan.outputs.report-dir }}
         if-no-files-found: warn
 
     - name: Apply scan result
+      if: ${{ always() }}
       shell: bash
-      run: exit "${{ steps.scan.outputs.exit-code }}"
+      env:
+        SCAN_EXIT: ${{ steps.scan.outputs.exit-code }}
+      # 2 when the scan never ran (a setup step failed before it).
+      run: exit "${SCAN_EXIT:-2}"

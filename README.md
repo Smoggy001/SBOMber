@@ -287,12 +287,16 @@ and uploads the SBOM plus vulnerability report as workflow artifacts.
     include-vulnerabilities: "true"  # run Grype as well
     fail-on-vuln: "true"             # fail the step if vulnerabilities are found
     github-token: ${{ github.token }} # raises GHSA lookup rate limits
+    # grype-version: "v0.120.1"      # pinned Grype release (default)
+    # artifact-name: "sbomber-report" # change when running the action twice in a job
 ```
 
 Exit codes match the CLI's own policy: `0` clean, `1` vulnerabilities found
 (only when `fail-on-vuln: "true"`), `2` tool/usage error. A job summary and
 the `sbomber-report` artifact (SBOM + HTML vulnerability report) are written
-on every run, including failed ones. See
+on every run, including failed ones. Inputs reach the scan as environment
+variables, never pasted into shell, and the workflow needs only
+`permissions: contents: read`. See
 [`.github/workflows/sbomber-scan.yml`](.github/workflows/sbomber-scan.yml)
 for a complete, working reference workflow — it also scans this repository
 on every push to `main`.
