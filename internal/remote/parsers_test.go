@@ -72,8 +72,13 @@ numpy
 
 	if dep, ok := found["requests"]; !ok {
 		t.Error("missing requests dependency")
-	} else if dep.Version != "==2.28.1" {
-		t.Errorf("requests version = %s, want ==2.28.1", dep.Version)
+	} else if dep.Version != "2.28.1" {
+		// A bare version, not the "==2.28.1" specifier: the specifier made
+		// SBOM purls (pkg:pypi/requests@==2.28.1) that Grype cannot match.
+		t.Errorf("requests version = %s, want 2.28.1", dep.Version)
+	}
+	if dep := found["flask"]; dep.Version != "" {
+		t.Errorf("flask>=2.0.0 is a range, not a version; got %q", dep.Version)
 	}
 
 	if _, ok := found["django"]; !ok {

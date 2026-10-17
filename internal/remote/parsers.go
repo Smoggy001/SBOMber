@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/Xsamsx/SBOMber/internal/deps"
+	"github.com/Xsamsx/SBOMber/internal/python"
 )
 
 // ParseContent parses a manifest file's raw content given its path.
@@ -195,7 +196,7 @@ func parsePythonRequirement(line string) (name, version string) {
 	if len(matches) >= 2 {
 		name = strings.ToLower(matches[1])
 		if len(matches) >= 3 {
-			version = strings.TrimSpace(matches[2])
+			version = python.PinnedVersion(matches[2])
 		}
 	}
 	return
