@@ -223,14 +223,7 @@ func Compare(groundTruth, generated []Component) *ComparisonResult {
 	// Find matches and mismatches
 	for key, truth := range truthMap {
 		if gen, found := genMap[key]; found {
-			// If ground truth requests "latest" or has no version, treat as wildcard (any generated version is acceptable)
-			if strings.EqualFold(strings.TrimSpace(truth.Version), "latest") || strings.TrimSpace(truth.Version) == "" {
-				result.Matched = append(result.Matched, ComponentMatch{
-					Name:    truth.Name,
-					Version: truth.Version,
-				})
-				result.MatchedCount++
-			} else if normalizeVersion(truth.Version) == normalizeVersion(gen.Version) {
+			if normalizeVersion(truth.Version) == normalizeVersion(gen.Version) {
 				result.Matched = append(result.Matched, ComponentMatch{
 					Name:    truth.Name,
 					Version: truth.Version,
@@ -303,17 +296,8 @@ func normalizeKey(name string) string {
 
 // normalizeVersion removes common prefixes/suffixes for comparison
 func normalizeVersion(v string) string {
-	v = strings.TrimSpace(v)
-	// Remove common comparison operators and prefixes like >=, <=, >, <, ~=, ^, =
-	v = strings.TrimLeftFunc(v, func(r rune) bool {
-		switch r {
-		case ' ', '>', '<', '~', '^', '=', '!':
-			return true
-		default:
-			return false
-		}
-	})
 	v = strings.TrimPrefix(v, "v")
+	v = strings.TrimPrefix(v, "=")
 	v = strings.TrimSpace(v)
 	return v
 }

@@ -1198,9 +1198,6 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 					fmt.Print("\033[H\033[2J")
 					_, _ = fmt.Fprint(stdout, "Goodbye!\n")
 					return 0
-				} else {
-					// Increment interactive scan counter (UI gamification)
-					incrementScanCount()
 				}
 			case "github":
 				// Show scanning message
@@ -1252,9 +1249,6 @@ func runInteractive(stdin io.Reader, stdout io.Writer, stderr io.Writer) int {
 					fmt.Print("\033[H\033[2J")
 					_, _ = fmt.Fprint(stdout, "Goodbye!\n")
 					return 0
-				} else {
-					// Increment interactive scan counter (UI gamification)
-					incrementScanCount()
 				}
 			case "version":
 				if quit := showResultsScreen(fmt.Sprintf("SBOMber %s", version), ""); quit {
