@@ -330,9 +330,12 @@ func (s *Scanner) ScanRepos(repoURLs []string) []*ScanResult {
 	return results
 }
 
-// FetchHealthMetrics fetches health metrics for a scan result.
+// FetchHealthMetrics fetches health metrics for a scan result, bounded by the
+// Scanner's timeout like the scan itself.
 func (s *Scanner) FetchHealthMetrics(result *ScanResult) error {
-	metrics, err := s.client.GetHealthMetrics(result.Owner, result.Repo)
+	ctx, cancel := context.WithTimeout(context.Background(), s.timeout)
+	defer cancel()
+	metrics, err := s.client.GetHealthMetrics(ctx, result.Owner, result.Repo)
 	if err != nil {
 		return err
 	}
