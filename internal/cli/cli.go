@@ -26,6 +26,7 @@ import (
 	"github.com/Xsamsx/SBOMber/internal/health"
 	"github.com/Xsamsx/SBOMber/internal/localisation"
 	"github.com/Xsamsx/SBOMber/internal/maven"
+	"github.com/Xsamsx/SBOMber/internal/netstatus"
 	"github.com/Xsamsx/SBOMber/internal/npm"
 	"github.com/Xsamsx/SBOMber/internal/nuget"
 	"github.com/Xsamsx/SBOMber/internal/python"
@@ -376,7 +377,10 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		ghsaCtx, ghsaCancel := context.WithTimeout(context.Background(), 120*time.Second)
 		ghsaResults, ghsaErr := vulnerability.ScanPackagesWithGHSA(ghsaCtx, pkgRefs)
 		ghsaCancel()
-		if ghsaErr != nil || ghsaResults == nil {
+		if ghsaErr != nil {
+			_, _ = fmt.Fprintf(stderr, "  GitHub Advisory scan failed: %v\n", ghsaErr)
+		}
+		if ghsaResults == nil {
 			ghsaResults = &vulnerability.ScanResults{Vulnerabilities: make([]vulnerability.VulnerabilityResult, 0)}
 		}
 		if ghsaResults.TotalCount > 0 {
@@ -421,6 +425,11 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 				vulnResults.TotalCount = len(vulnResults.Vulnerabilities)
 			}
 		}
+		// The package scan's own status travels with the merged results, so
+		// the report and the summary below show it next to the other sources.
+		if vulnResults != nil && vulnResults != ghsaResults {
+			vulnResults.NetworkStatus = append(vulnResults.NetworkStatus, ghsaResults.NetworkStatus...)
+		}
 
 		// Generate report (combined if we have both, otherwise just what we have)
 		if vulnResults != nil && len(healthMetrics) > 0 {
@@ -445,6 +454,7 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 				_, _ = fmt.Fprintf(stdout, "  Report: %s\n", reportPath)
 			}
 		}
+		printNetworkStatus(stdout, vulnResults)
 
 		rateLimit := client.GetRateLimit()
 		if rateLimit.Remaining > 0 {
@@ -1114,6 +1124,7 @@ func runGitLabScan(args []string, stdout io.Writer, stderr io.Writer) int {
 				_, _ = fmt.Fprintf(stdout, "  Report: %s\n", rp)
 			}
 		}
+		printNetworkStatus(stdout, vulnResults)
 
 		_, _ = fmt.Fprintln(stdout)
 	}
@@ -1726,7 +1737,29 @@ func generateVulnReport(stdout io.Writer, stderr io.Writer, scanPath, outputDir,
 		return vulnResults.TotalCount
 	}
 	_, _ = fmt.Fprintf(stdout, "  HTML report: %s\n", filepath.Base(reportPath))
+	printNetworkStatus(stdout, vulnResults)
 	return vulnResults.TotalCount
+}
+
+// printNetworkStatus prints one line per enrichment source (EPSS, KEV,
+// GHSA, npm registry, malware) that did not succeed, so a source that
+// failed or was skipped is visible instead of looking identical to a
+// clean, empty result. Sources that reported success are not printed,
+// keeping the common case quiet.
+func printNetworkStatus(stdout io.Writer, vulnResults *vulnerability.ScanResults) {
+	if vulnResults == nil {
+		return
+	}
+	for _, r := range vulnResults.NetworkStatus {
+		if r.Status == netstatus.Success {
+			continue
+		}
+		if r.Detail != "" {
+			_, _ = fmt.Fprintf(stdout, "  [%s] %s: %s\n", r.Source, r.Status, r.Detail)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "  [%s] %s\n", r.Source, r.Status)
+		}
+	}
 }
 
 func containsEcosystem(names []ecosystem.Name, candidate ecosystem.Name) bool {
