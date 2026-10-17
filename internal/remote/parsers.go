@@ -142,16 +142,21 @@ func parsePackageLockJSON(content []byte) (deps.Summary, error) {
 	return summary, nil
 }
 
+// packageLockPackageName returns the package name for a lockfile v2/v3
+// "packages" key: "node_modules/a/node_modules/@s/b" is "@s/b", a nested copy
+// installed under its parent.
 func packageLockPackageName(path string) string {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return ""
 	}
-	path = strings.TrimPrefix(path, "node_modules/")
-	if idx := strings.LastIndex(path, "/node_modules/"); idx >= 0 {
-		return path[idx+len("/node_modules/"):]
+	if idx := strings.LastIndex(path, "node_modules/"); idx >= 0 && (idx == 0 || path[idx-1] == '/') {
+		return path[idx+len("node_modules/"):]
 	}
-	return path
+	// A path outside node_modules ("packages/app") is a workspace source
+	// folder, not an installed package; the workspace itself is listed again
+	// as a "node_modules/<name>" link entry.
+	return ""
 }
 
 func parseRequirementsTxt(content []byte) (deps.Summary, error) {

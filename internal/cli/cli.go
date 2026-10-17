@@ -285,12 +285,16 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	vulnFound := false
+	// A repository that could not be scanned is a tool error (exit 2), not a
+	// clean result: CI must not read an unscanned repository as safe.
+	scanFailed := false
 	for _, repoURL := range repoURLs {
 		_, _ = fmt.Fprintf(stdout, "Scanning: %s\n", repoURL)
 
 		result, err := scanner.ScanRepo(repoURL)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "  Error: %v\n", err)
+			scanFailed = true
 			continue
 		}
 
@@ -300,6 +304,9 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 
 		if result.Status != "" && result.Status != remote.StatusComplete {
 			_, _ = fmt.Fprintf(stdout, "  Status: %s\n", result.Status)
+			if result.Status == remote.StatusFailed {
+				scanFailed = true
+			}
 			for _, skip := range result.Skipped {
 				_, _ = fmt.Fprintf(stdout, "    - %s\n", skip)
 			}
@@ -447,6 +454,10 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	_, _ = fmt.Fprintf(stdout, "GitHub scan complete. Output saved to: %s\n", outputDir)
+	if scanFailed {
+		_, _ = fmt.Fprintf(stderr, "one or more repositories could not be scanned\n")
+		return 2
+	}
 	if *failOnVuln && vulnFound {
 		return 1
 	}

@@ -119,8 +119,9 @@ func splitOwnerRepo(path string) (owner, repo string, err error) {
 	return parts[0], parts[1], nil
 }
 
-// GetRepoInfo fetches repository metadata.
-func (c *Client) GetRepoInfo(owner, repo string) (*RepoInfo, error) {
+// GetRepoInfo fetches repository metadata. ctx bounds the request (e.g. the
+// scan deadline).
+func (c *Client) GetRepoInfo(ctx context.Context, owner, repo string) (*RepoInfo, error) {
 	key := owner + "/" + repo
 
 	c.cache.mu.RLock()
@@ -131,7 +132,7 @@ func (c *Client) GetRepoInfo(owner, repo string) (*RepoInfo, error) {
 	c.cache.mu.RUnlock()
 
 	endpoint := fmt.Sprintf("%s/repos/%s/%s", c.baseURL, owner, repo)
-	body, err := c.doRequest(context.Background(), "GET", endpoint)
+	body, err := c.doRequest(ctx, "GET", endpoint)
 	if err != nil {
 		return nil, err
 	}
@@ -248,12 +249,13 @@ func (c *Client) GetFileContent(ctx context.Context, owner, repo, path string) (
 	return content, nil
 }
 
-// GetContributors fetches contributor stats for a repository.
-func (c *Client) GetContributors(owner, repo string) (*ContributorStats, error) {
+// GetContributors fetches contributor stats for a repository. ctx bounds the
+// requests (e.g. the scan deadline).
+func (c *Client) GetContributors(ctx context.Context, owner, repo string) (*ContributorStats, error) {
 	// Fetch up to 100 contributors per page, use Link header for total if more
 	endpoint := fmt.Sprintf("%s/repos/%s/%s/contributors?per_page=100&anon=1", c.baseURL, owner, repo)
 
-	req, err := http.NewRequestWithContext(context.Background(), "GET", endpoint, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", endpoint, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -336,7 +338,7 @@ func extractLastPage(linkHeader string) int {
 }
 
 // GetHealthMetrics calculates supply chain health metrics for a repository.
-func (c *Client) GetHealthMetrics(owner, repo string) (*HealthMetrics, error) {
+func (c *Client) GetHealthMetrics(ctx context.Context, owner, repo string) (*HealthMetrics, error) {
 	key := owner + "/" + repo
 
 	c.cache.mu.RLock()
@@ -346,12 +348,12 @@ func (c *Client) GetHealthMetrics(owner, repo string) (*HealthMetrics, error) {
 	}
 	c.cache.mu.RUnlock()
 
-	info, err := c.GetRepoInfo(owner, repo)
+	info, err := c.GetRepoInfo(ctx, owner, repo)
 	if err != nil {
 		return nil, err
 	}
 
-	contribs, err := c.GetContributors(owner, repo)
+	contribs, err := c.GetContributors(ctx, owner, repo)
 	if err != nil {
 		contribs = &ContributorStats{TotalContributors: 0}
 	}
