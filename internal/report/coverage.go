@@ -13,6 +13,7 @@ import (
 // decision, 13 September 2026). The decision-results file only carries a
 // per-finding summary, so the report reads the graph's own counts directly.
 type Coverage struct {
+	Observations  []EvidenceObservation  `json:"observations"`
 	ScanID        string                 `json:"scanId"`
 	Analysis      CoverageAnalysis       `json:"analysis"`
 	Counts        CoverageCounts         `json:"coverage"`
@@ -72,6 +73,9 @@ func LoadCoverage(path string) (*Coverage, error) {
 	if err := json.Unmarshal(b, &c); err != nil {
 		return nil, fmt.Errorf("parse %s: %w", path, err)
 	}
+	if strings.TrimSpace(c.ScanID) == "" {
+		return nil, fmt.Errorf("%s has no scanId; coverage must identify its scan", path)
+	}
 	if c.Analysis.Status == "" {
 		return nil, fmt.Errorf("%s has no analysis.status; is it a usage-graph.json?", path)
 	}
@@ -82,7 +86,10 @@ func LoadCoverage(path string) (*Coverage, error) {
 // pairing a report with another scan's coverage would misstate what was
 // analysed.
 func (c *Coverage) MatchesScan(scanID string) error {
-	if c.ScanID != "" && scanID != "" && c.ScanID != scanID {
+	if strings.TrimSpace(c.ScanID) == "" || strings.TrimSpace(scanID) == "" {
+		return fmt.Errorf("usage graph and decisions must both identify their scan")
+	}
+	if c.ScanID != scanID {
 		return fmt.Errorf("usage graph is for scan %q but the decisions are for scan %q", c.ScanID, scanID)
 	}
 	return nil
@@ -190,4 +197,44 @@ func partialWarning(scanStatus string) string {
 // an analysis that did not complete.
 func needsPartialWarning(f PackageFinding) bool {
 	return f.State == StateUsageDetected && (f.ScanStatus == "partial" || f.ScanStatus == "failed")
+}
+
+// EvidenceObservation holds the source locations referenced by a decision.
+type EvidenceObservation struct {
+	ObservationID string `json:"observationId"`
+	Location      struct {
+		File string `json:"file"`
+		Line int    `json:"line"`
+	} `json:"location"`
+	CallSites []struct {
+		File         string `json:"file"`
+		Line         int    `json:"line"`
+		CalledSymbol string `json:"calledSymbol"`
+	} `json:"callSites"`
+}
+
+func findingEvidence(f PackageFinding, c *Coverage) []string {
+	var lines []string
+	if len(f.MatchedSymbols) > 0 {
+		lines = append(lines, "Matched symbols: "+strings.Join(f.MatchedSymbols, ", "))
+	}
+	if c == nil {
+		return lines
+	}
+	ids := make(map[string]bool, len(f.UsageObservationIDs))
+	for _, id := range f.UsageObservationIDs {
+		ids[id] = true
+	}
+	for _, o := range c.Observations {
+		if !ids[o.ObservationID] {
+			continue
+		}
+		if o.Location.File != "" {
+			lines = append(lines, fmt.Sprintf("Referenced import %s: %s:%d", o.ObservationID, o.Location.File, o.Location.Line))
+		}
+		for _, call := range o.CallSites {
+			lines = append(lines, fmt.Sprintf("Observed call in %s: %s:%d %s", o.ObservationID, call.File, call.Line, call.CalledSymbol))
+		}
+	}
+	return lines
 }

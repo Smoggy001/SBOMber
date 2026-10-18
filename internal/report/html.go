@@ -61,6 +61,7 @@ func RenderHTML(r Report) (string, error) {
 				}
 				fv := htmlFinding{
 					FindingID:     f.FindingID,
+					Evidence:      findingEvidence(f, r.Coverage),
 					Label:         label,
 					Tags:          strings.Join(findingTags(f), ", "),
 					Justification: f.Justification,
@@ -116,6 +117,7 @@ type htmlGroup struct {
 }
 
 type htmlFinding struct {
+	Evidence      []string
 	FindingID     string
 	Label         string
 	Tags          string
@@ -245,7 +247,7 @@ td.id { white-space: nowrap; font-family: ui-monospace, SFMono-Regular, Menlo, m
 {{range .Findings}}<tr data-finding-id="{{.FindingID}}"{{if .Untrusted}} class="untrusted"{{end}}>
 <td class="id">{{.Label}}</td>
 <td>{{.Tags}}</td>
-<td>{{.Justification}}{{if .Warning}}<div class="warn">{{.Warning}}</div>{{end}}</td>
+<td>{{.Justification}}{{range .Evidence}}<div>{{.}}</div>{{end}}{{if .Warning}}<div class="warn">{{.Warning}}</div>{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>{{end}}

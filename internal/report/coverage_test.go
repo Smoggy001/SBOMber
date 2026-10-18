@@ -1,6 +1,9 @@
 package report
 
 import (
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -185,5 +188,56 @@ func TestReport_FindingCounts(t *testing.T) {
 		if want[c.Section] != c.Findings {
 			t.Errorf("%s: %d findings, want %d", c.Section, c.Findings, want[c.Section])
 		}
+	}
+}
+
+func TestLoadCoverageRequiresScanIdentity(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "usage.json")
+	if err := os.WriteFile(path, []byte(`{"analysis":{"status":"complete"},"coverage":{}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadCoverage(path); err == nil {
+		t.Fatal("coverage without scan identity accepted")
+	}
+	if err := (&Coverage{}).MatchesScan("scan-1"); err == nil {
+		t.Fatal("missing identity matched a scan")
+	}
+}
+
+func TestLoadDecisionResultsRejectsNullDecisions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "decisions.json")
+	if err := os.WriteFile(path, []byte(`{"scanId":"scan-1","decisions":null}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadDecisionResults(path); err == nil {
+		t.Fatal("null decisions accepted as an empty completed result")
+	}
+}
+
+func TestReportIncludesConfidenceAndReferencedSourceLocations(t *testing.T) {
+	dr := DecisionResults{ScanID: "scan-1", Decisions: []Decision{{FindingID: "f1", PURL: "pkg:npm/x@1", State: StateUsageDetected, AnalysisConfidence: "high", RiskPriority: RiskPriority{Band: BandActNow}, BasedOn: BasedOn{UsageObservationIDs: []string{"obs-1"}, MatchedSymbols: []string{"render"}}}}}
+	r := BuildReport(dr)
+	var cov Coverage
+	if err := json.Unmarshal([]byte(`{"scanId":"scan-1","analysis":{"status":"complete"},"observations":[{"observationId":"obs-1","location":{"file":"src/main.js","line":1},"callSites":[{"file":"src/main.js","line":7,"calledSymbol":"render<script>"}]},{"observationId":"unrelated","location":{"file":"other.js","line":99}}]}`), &cov); err != nil {
+		t.Fatal(err)
+	}
+	r.Coverage = &cov
+	text := RenderText(r)
+	page, err := RenderHTML(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, out := range []string{text, page} {
+		for _, want := range []string{"confidence high", "Matched symbols: render", "src/main.js:7", "src/main.js:1"} {
+			if !strings.Contains(out, want) {
+				t.Errorf("missing %q in %s", want, out)
+			}
+		}
+		if strings.Contains(out, "other.js") {
+			t.Error("included evidence not referenced by the decision")
+		}
+	}
+	if strings.Contains(page, "render<script>") || !strings.Contains(page, "render&lt;script&gt;") {
+		t.Fatal("source evidence was not escaped in HTML")
 	}
 }

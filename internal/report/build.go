@@ -56,6 +56,9 @@ const UngroupedPURL = "(no package identifier)"
 // grouped report needs to show per finding without going back to
 // decision-results.json.
 type PackageFinding struct {
+	AnalysisConfidence   string
+	UsageObservationIDs  []string
+	MatchedSymbols       []string
 	FindingID            string
 	VulnerabilityID      string
 	State                string
@@ -238,6 +241,9 @@ func buildEntries(rg RemediationGroup, decByID map[string]Decision) []PackageGro
 		}
 		all = append(all, PackageFinding{
 			FindingID:            d.FindingID,
+			AnalysisConfidence:   d.AnalysisConfidence,
+			UsageObservationIDs:  d.BasedOn.UsageObservationIDs,
+			MatchedSymbols:       d.BasedOn.MatchedSymbols,
 			VulnerabilityID:      d.VulnerabilityID,
 			State:                d.State,
 			Band:                 d.RiskPriority.Band,
@@ -447,7 +453,10 @@ func classifyGroup(pg PackageGroup) Section {
 		switch f.State {
 		case StateNoUsageDetected:
 			// contributes to allNoUsage; no other flag
-		case StateUsageDetected, StateUnknown, StateUnsupported:
+		case StateUnknown, StateUnsupported:
+			anyInsufficient = true
+			allNoUsage = false
+		case StateUsageDetected:
 			allNoUsage = false
 		default:
 			// Unrecognised state value: never let it pass as the

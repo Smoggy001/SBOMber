@@ -42,7 +42,7 @@ func RenderText(r Report) string {
 			b.WriteString("\nNo findings in this section.\n")
 		}
 		for _, pg := range sg.Groups {
-			renderPackageGroup(&b, pg)
+			renderPackageGroup(&b, pg, r.Coverage)
 		}
 	}
 
@@ -88,7 +88,7 @@ func findingCount(r Report) int {
 	return n
 }
 
-func renderPackageGroup(b *strings.Builder, pg PackageGroup) {
+func renderPackageGroup(b *strings.Builder, pg PackageGroup, coverage *Coverage) {
 	b.WriteString("\n")
 	fmt.Fprintf(b, "%s", pg.PURL)
 	if pg.InstalledVersion != "" {
@@ -109,6 +109,9 @@ func renderPackageGroup(b *strings.Builder, pg PackageGroup) {
 
 	for _, f := range pg.Findings {
 		renderFinding(b, f)
+		for _, line := range findingEvidence(f, coverage) {
+			fmt.Fprintf(b, "    %s\n", line)
+		}
 	}
 }
 
@@ -148,6 +151,9 @@ func renderFinding(b *strings.Builder, f PackageFinding) {
 
 func findingTags(f PackageFinding) []string {
 	tags := []string{f.State}
+	if f.AnalysisConfidence != "" {
+		tags = append(tags, "confidence "+f.AnalysisConfidence)
+	}
 	if f.Severity != "" {
 		tags = append(tags, f.Severity)
 	}

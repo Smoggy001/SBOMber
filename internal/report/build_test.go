@@ -371,3 +371,12 @@ func TestBuildReport_NoRemediationGroupsGroupsByPURL(t *testing.T) {
 		t.Errorf("minimist@1.2.5 (unknown) filed under %q, want %q", s, SectionInsufficientInfo)
 	}
 }
+
+func TestUnknownStateCannotBecomeLowerPriority(t *testing.T) {
+	for _, state := range []string{StateUnknown, StateUnsupported} {
+		got := classifyGroup(PackageGroup{Findings: []PackageFinding{{State: state, Band: BandLowerPriority}}})
+		if got != SectionInsufficientInfo {
+			t.Errorf("%s with inconsistent lower band went to %s", state, got)
+		}
+	}
+}
