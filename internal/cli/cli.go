@@ -26,6 +26,7 @@ import (
 	"github.com/Xsamsx/SBOMber/internal/health"
 	"github.com/Xsamsx/SBOMber/internal/localisation"
 	"github.com/Xsamsx/SBOMber/internal/maven"
+	"github.com/Xsamsx/SBOMber/internal/netstatus"
 	"github.com/Xsamsx/SBOMber/internal/npm"
 	"github.com/Xsamsx/SBOMber/internal/nuget"
 	"github.com/Xsamsx/SBOMber/internal/python"
@@ -33,10 +34,11 @@ import (
 	"github.com/Xsamsx/SBOMber/internal/ruby"
 	"github.com/Xsamsx/SBOMber/internal/sbom"
 	"github.com/Xsamsx/SBOMber/internal/verify"
+	"github.com/Xsamsx/SBOMber/internal/vex"
 	"github.com/Xsamsx/SBOMber/internal/vulnerability"
 )
 
-const version = "0.1.0"
+const version = "0.1.1"
 
 var (
 	colorReset = "\033[0m"
@@ -103,10 +105,14 @@ func Main(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) in
 		return runDiff(args[1:], stdout, stderr)
 	case "localise", "localize":
 		return runLocalise(args[1:], stdout, stderr)
+	case "usage":
+		return runUsage(args[1:], stdout, stderr)
 	case "decide":
 		return runDecide(args[1:], stdout, stderr)
 	case "audit":
 		return runAudit(args[1:], stdout, stderr)
+	case "vex":
+		return runVEX(args[1:], stdout, stderr)
 	case "demo":
 		return runDemo(stdout, stderr)
 	case "help", "--help", "-h":
@@ -282,18 +288,32 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	vulnFound := false
+	// A repository that could not be scanned is a tool error (exit 2), not a
+	// clean result: CI must not read an unscanned repository as safe.
+	scanFailed := false
 	for _, repoURL := range repoURLs {
 		_, _ = fmt.Fprintf(stdout, "Scanning: %s\n", repoURL)
 
 		result, err := scanner.ScanRepo(repoURL)
 		if err != nil {
 			_, _ = fmt.Fprintf(stderr, "  Error: %v\n", err)
+			scanFailed = true
 			continue
 		}
 
 		_, _ = fmt.Fprintf(stdout, "  Found %d manifests: %s\n", len(result.Manifests), strings.Join(result.Manifests, ", "))
 		_, _ = fmt.Fprintf(stdout, "  Dependencies: %d direct, %d transitive\n",
 			len(result.Summary.Direct), len(result.Summary.Transitive))
+
+		if result.Status != "" && result.Status != remote.StatusComplete {
+			_, _ = fmt.Fprintf(stdout, "  Status: %s\n", result.Status)
+			if result.Status == remote.StatusFailed {
+				scanFailed = true
+			}
+			for _, skip := range result.Skipped {
+				_, _ = fmt.Fprintf(stdout, "    - %s\n", skip)
+			}
+		}
 
 		repoOutputDir := filepath.Join(outputDir, result.Owner+"_"+result.Repo)
 		if err := os.MkdirAll(repoOutputDir, 0755); err != nil {
@@ -359,7 +379,10 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 		ghsaCtx, ghsaCancel := context.WithTimeout(context.Background(), 120*time.Second)
 		ghsaResults, ghsaErr := vulnerability.ScanPackagesWithGHSA(ghsaCtx, pkgRefs)
 		ghsaCancel()
-		if ghsaErr != nil || ghsaResults == nil {
+		if ghsaErr != nil {
+			_, _ = fmt.Fprintf(stderr, "  GitHub Advisory scan failed: %v\n", ghsaErr)
+		}
+		if ghsaResults == nil {
 			ghsaResults = &vulnerability.ScanResults{Vulnerabilities: make([]vulnerability.VulnerabilityResult, 0)}
 		}
 		if ghsaResults.TotalCount > 0 {
@@ -404,6 +427,11 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 				vulnResults.TotalCount = len(vulnResults.Vulnerabilities)
 			}
 		}
+		// The package scan's own status travels with the merged results, so
+		// the report and the summary below show it next to the other sources.
+		if vulnResults != nil && vulnResults != ghsaResults {
+			vulnResults.NetworkStatus = append(vulnResults.NetworkStatus, ghsaResults.NetworkStatus...)
+		}
 
 		// Generate report (combined if we have both, otherwise just what we have)
 		if vulnResults != nil && len(healthMetrics) > 0 {
@@ -428,6 +456,7 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 				_, _ = fmt.Fprintf(stdout, "  Report: %s\n", reportPath)
 			}
 		}
+		printNetworkStatus(stdout, vulnResults)
 
 		rateLimit := client.GetRateLimit()
 		if rateLimit.Remaining > 0 {
@@ -437,6 +466,10 @@ func runGitHubScan(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	_, _ = fmt.Fprintf(stdout, "GitHub scan complete. Output saved to: %s\n", outputDir)
+	if scanFailed {
+		_, _ = fmt.Fprintf(stderr, "one or more repositories could not be scanned\n")
+		return 2
+	}
 	if *failOnVuln && vulnFound {
 		return 1
 	}
@@ -1093,6 +1126,7 @@ func runGitLabScan(args []string, stdout io.Writer, stderr io.Writer) int {
 				_, _ = fmt.Fprintf(stdout, "  Report: %s\n", rp)
 			}
 		}
+		printNetworkStatus(stdout, vulnResults)
 
 		_, _ = fmt.Fprintln(stdout)
 	}
@@ -1705,7 +1739,29 @@ func generateVulnReport(stdout io.Writer, stderr io.Writer, scanPath, outputDir,
 		return vulnResults.TotalCount
 	}
 	_, _ = fmt.Fprintf(stdout, "  HTML report: %s\n", filepath.Base(reportPath))
+	printNetworkStatus(stdout, vulnResults)
 	return vulnResults.TotalCount
+}
+
+// printNetworkStatus prints one line per enrichment source (EPSS, KEV,
+// GHSA, npm registry, malware) that did not succeed, so a source that
+// failed or was skipped is visible instead of looking identical to a
+// clean, empty result. Sources that reported success are not printed,
+// keeping the common case quiet.
+func printNetworkStatus(stdout io.Writer, vulnResults *vulnerability.ScanResults) {
+	if vulnResults == nil {
+		return
+	}
+	for _, r := range vulnResults.NetworkStatus {
+		if r.Status == netstatus.Success {
+			continue
+		}
+		if r.Detail != "" {
+			_, _ = fmt.Fprintf(stdout, "  [%s] %s: %s\n", r.Source, r.Status, r.Detail)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "  [%s] %s\n", r.Source, r.Status)
+		}
+	}
 }
 
 func containsEcosystem(names []ecosystem.Name, candidate ecosystem.Name) bool {
@@ -1762,14 +1818,16 @@ func printUsage(w io.Writer) {
 Usage:
   sbomber
   sbomber scan [path] [--format FORMAT] [--include-vulnerabilities] [--fail-on-vuln] [--no-color]
-  sbomber github [--health] [--include-vulnerabilities] [--fail-on-vuln] [--format FORMAT] <repo-url>...
-  sbomber gitlab [--health] [--include-vulnerabilities] [--fail-on-vuln] [--format FORMAT] [--instance URL] <repo-url>...
+  sbomber github [--health] [--include-vulnerabilities] [--fail-on-vuln] [--no-color] [--format FORMAT] <repo-url>...
+  sbomber gitlab [--health] [--include-vulnerabilities] [--fail-on-vuln] [--no-color] [--format FORMAT] [--instance URL] <repo-url>...
   sbomber trace <path> [package-name] [flags] [--no-color]
   sbomber verify <ground-truth-sbom> <generated-sbom> [--json]
   sbomber diff <old-sbom> <new-sbom> [--no-color]
   sbomber localise --canonical-scan <canonical-scan.json> [--out localisation.json] [--trace trace.json]
+  sbomber usage --canonical-scan <canonical-scan.json> [--out usage-graph.json] [--entry file:function]
   sbomber decide --canonical-scan <file> --usage-graph <file> --localisation <file> [--out decision-results.json]
   sbomber audit [--cases testdata/audit] [--out audit-results.json]
+  sbomber vex --decisions <decision-results.json> [--canonical-scan <file>] [--subject application|package] [--product <id>] [--out vex.openvex.json]
   sbomber version
 
 Scan Flags:
@@ -1806,11 +1864,32 @@ Localise Flags (Component 3: which function does an advisory implicate?):
   --timeout <duration>                  overall time budget (default: 15m)
   GITHUB_TOKEN                          environment variable used for GitHub API requests
 
+Usage Flags (Component 2: which package functions does the app import and call?):
+  --canonical-scan <file>               canonical-scan.json produced by the scan (required)
+  --out <file>                          usage-graph.json to write (default: usage-graph.json)
+  --repo [repositoryId=]<path>          local source for a repository (default: paths in the scan,
+                                        relative to the canonical-scan.json file)
+  --entry [repositoryId=]<file>:<fn>[:line]
+                                        declared entry point; <module> means top-level code (repeatable)
+  --no-reachability                     skip the reachability pass
+  --allow-partial                       exit 0 when the analysis is partial (default: exit 2)
+  --max-files <n>                       source files parsed per repository (default: 10000)
+  --max-file-bytes <n>                  largest source file parsed (default: 1000000)
 Decide Flags (Component 4: state, confidence, risk priority, justification):
   --canonical-scan <file>               canonical-scan.json (required)
   --usage-graph <file>                  usage-graph.json (required)
   --localisation <file>                 localisation.json (required)
   --out <file>                          decision-results.json to write (default: decision-results.json)
+VEX Flags (Component 3: OpenVEX 0.2.0 from decision-results.json):
+  --decisions <file>                    decision-results.json produced by the decision engine (required)
+  --canonical-scan <file>               repository commit for the application subject, and alias IDs
+  --subject application|package         statement product (default: application)
+                                          application: the repository at its commit, package as subcomponent
+                                          package: the package purl, the shape Grype and Trivy act on
+  --product <id>                        application product @id override, e.g. pkg:github/org/repo@<sha>
+  --out <file>                          OpenVEX document to write (default: vex.openvex.json)
+  usage_detected -> affected only when explicitly mapped by the decision; otherwise under_investigation.
+  no_usage_detected and unknown -> under_investigation, unsupported -> omitted. not_affected is rejected by the committed exporter.
 
 Audit Flags (S5-14: replay hand-labelled cases through the decision pipeline):
   --cases <dir>                         one subdirectory per labelled case (default: testdata/audit)
@@ -1949,6 +2028,69 @@ func runLocalise(args []string, stdout io.Writer, stderr io.Writer) int {
 	if ctx.Err() != nil {
 		_, _ = fmt.Fprintf(stderr, "Warning: time budget exhausted; later findings may be unknown for that reason\n")
 	}
+	return 0
+}
+
+// runVEX reads decision-results.json and writes an OpenVEX document. The
+// status mapping lives in internal/vex.Map; this only wires files to it.
+func runVEX(args []string, stdout io.Writer, stderr io.Writer) int {
+	fs := flag.NewFlagSet("vex", flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	in := fs.String("decisions", "", "decision-results.json to read (required)")
+	scanPath := fs.String("canonical-scan", "", "canonical-scan.json for the repository identity and alias IDs")
+	subjectFlag := fs.String("subject", string(vex.DefaultSubject), "statement product: application or package")
+	product := fs.String("product", "", "application product @id override")
+	out := fs.String("out", "vex.openvex.json", "OpenVEX document to write")
+
+	if err := fs.Parse(args); err != nil {
+		return flagErrorCode(err)
+	}
+	if *in == "" {
+		_, _ = fmt.Fprintf(stderr, "Usage: sbomber vex --decisions <decision-results.json> [--canonical-scan <file>] [--subject application|package] [--product <id>] [--out vex.openvex.json]\n")
+		return 2
+	}
+	subject, err := vex.ParseSubject(*subjectFlag)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 2
+	}
+	dr, err := vex.LoadDecisionResults(*in)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 2
+	}
+	opts := vex.Options{Subject: subject, Product: *product, Tooling: "sbomber " + version}
+	if *scanPath != "" {
+		if opts.Scan, err = vex.LoadCanonicalScan(*scanPath); err != nil {
+			_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+			return 2
+		}
+	}
+
+	res, err := vex.Export(dr, opts)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 2
+	}
+	s := res.Summary
+	_, _ = fmt.Fprintf(stdout, "OpenVEX from %s (%s subject): %d decision(s), %d affected, %d under_investigation, %d omitted\n",
+		dr.ScanID, subject, s.Decisions, s.Affected, s.UnderInvestigation, s.Omitted)
+	if s.Omitted > 0 {
+		_, _ = fmt.Fprintf(stdout, "  omitted as unsupported, still shown in the report: %s\n", strings.Join(s.OmittedFindingIDs, ", "))
+	}
+	if len(res.Document.Statements) == 0 {
+		// OpenVEX 0.2.0 requires at least one statement.
+		_, _ = fmt.Fprintf(stdout, "No statements to export; OpenVEX needs at least one, so %s was not written\n", *out)
+		return 0
+	}
+	if subject == vex.SubjectApplication {
+		_, _ = fmt.Fprintf(stdout, "  note: Grype 0.112.0 and Trivy 0.70.0 do not act on application-scoped statements (issue #128); use --subject package for a document those consumers act on\n")
+	}
+	if err := writeJSONFile(*out, res.Document); err != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: %v\n", err)
+		return 2
+	}
+	_, _ = fmt.Fprintf(stdout, "Wrote %s\n", *out)
 	return 0
 }
 
