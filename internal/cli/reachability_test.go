@@ -76,16 +76,51 @@ func TestReachabilityScoresCalledFunction(t *testing.T) {
 		t.Errorf("overall = %d%% %s, want 87%% HIGH RISK", critical.OverallPercent, critical.OverallBand)
 	}
 
-	// Imported but never called: nothing scored, so the project is secure.
+	// Imported but never called: nothing scored, so no call path was resolved.
 	lookedUp = nil
 	low := run("low")
-	if len(low.CalledFunctions) != 0 || len(low.NotCalled) != 1 {
-		t.Errorf("expected 0 called / 1 not called, got %d / %d", len(low.CalledFunctions), len(low.NotCalled))
+	if len(low.CalledFunctions) != 0 || len(low.Unresolved) != 1 {
+		t.Errorf("expected 0 called / 1 not called, got %d / %d", len(low.CalledFunctions), len(low.Unresolved))
 	}
-	if low.OverallPercent != 0 || low.OverallBand != reachability.BandSecure {
-		t.Errorf("overall = %d%% %s, want 0%% SECURE", low.OverallPercent, low.OverallBand)
+	if low.OverallPercent != 0 || low.OverallBand != reachability.BandUndetermined {
+		t.Errorf("overall = %d%% %s, want 0 points UNDETERMINED", low.OverallPercent, low.OverallBand)
 	}
 	if len(lookedUp) != 0 {
 		t.Errorf("expected no intel lookups for uncalled code, got %v", lookedUp)
+	}
+}
+
+func TestReachabilityRejectsExtraArguments(t *testing.T) {
+	var out, errs bytes.Buffer
+	if code := Main([]string{"reachability", ".", "--json"}, nil, &out, &errs); code != 2 {
+		t.Fatalf("exit = %d, stderr = %s", code, errs.String())
+	}
+}
+
+func TestUnresolvedReachabilityDoesNotClaimSafety(t *testing.T) {
+	var out bytes.Buffer
+	printReachabilityReport(&out, reachabilityReport{OverallBand: reachability.BandMinimal, Unresolved: []reachability.Finding{{OSV: "GO-TEST"}}})
+	text := strings.ToLower(out.String())
+	for _, bad := range []string{"secure", "never called"} {
+		if strings.Contains(text, bad) {
+			t.Fatalf("unsupported claim %q in %s", bad, text)
+		}
+	}
+	if !strings.Contains(text, "risk is undetermined") {
+		t.Fatalf("missing unresolved-risk caveat: %s", text)
+	}
+}
+
+func TestMissingExploitIntelIsReportedAsUnavailable(t *testing.T) {
+	var out bytes.Buffer
+	printReachabilityReport(&out, reachabilityReport{CalledFunctions: []reachability.CalledFunctionRisk{{Finding: reachability.Finding{OSV: "GO-TEST"}, SeverityAssumed: true}}})
+	text := out.String()
+	for _, want := range []string{"EPSS not reported", "CISA KEV status unavailable", "CVSS n/a"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("missing %q in %s", want, text)
+		}
+	}
+	if strings.Contains(text, "not listed in CISA KEV") {
+		t.Fatal("failed KEV lookup presented as a negative result")
 	}
 }

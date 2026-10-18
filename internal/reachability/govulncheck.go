@@ -173,14 +173,17 @@ func analyze(ctx context.Context, modulePath, dbURL string) ([]Finding, error) {
 
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = modulePath
-	var stdout bytes.Buffer
+	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
-	err := cmd.Run()
-	if err != nil {
-		// govulncheck exits non-zero when it finds reachable
-		// vulnerabilities; that is expected output, not a failure.
-		if _, ok := err.(*exec.ExitError); !ok {
-			return nil, fmt.Errorf("run govulncheck: %w", err)
+	cmd.Stderr = &stderr
+	runErr := cmd.Run()
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("run govulncheck: %w", ctx.Err())
+	}
+	if runErr != nil {
+		exit, ok := runErr.(*exec.ExitError)
+		if !ok || exit.ExitCode() != 3 {
+			return nil, fmt.Errorf("run govulncheck: %w: %s", runErr, strings.TrimSpace(stderr.String()))
 		}
 	}
 
@@ -189,6 +192,9 @@ func analyze(ctx context.Context, modulePath, dbURL string) ([]Finding, error) {
 		return nil, fmt.Errorf("parse govulncheck output: %w", err)
 	}
 
+	if runErr != nil && len(findingsByOSV) == 0 {
+		return nil, fmt.Errorf("govulncheck exited with findings status but emitted no findings")
+	}
 	results := make([]Finding, 0, len(findingsByOSV))
 	for osvID, findings := range findingsByOSV {
 		results = append(results, classify(osvID, osvSummaries[osvID], findings, rootModule, symbolLevel))
@@ -369,7 +375,7 @@ func (f govulncheckTraceFrame) callFrame(rootModule string) CallFrame {
 }
 
 func parseGovulncheckOutput(output []byte) (rootModule string, symbolLevel bool, osvSummaries map[string]govulncheckOSV, findingsByOSV map[string][]govulncheckFinding, err error) {
-	symbolLevel = true
+	symbolLevel = false
 	osvSummaries = make(map[string]govulncheckOSV)
 	findingsByOSV = make(map[string][]govulncheckFinding)
 

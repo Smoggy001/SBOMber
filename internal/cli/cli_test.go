@@ -343,3 +343,14 @@ func mustWriteFile(t *testing.T, path string, parts ...string) {
 		t.Fatalf("write %s: %v", path, err)
 	}
 }
+
+func TestGitHubScanFailedRepoIsToolError(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	var stdout, stderr bytes.Buffer
+	// Not a GitHub URL: ScanRepo fails before any request is made.
+	code := Main([]string{"github", "not-a-repository-url"}, strings.NewReader(""), &stdout, &stderr)
+	if code != 2 {
+		t.Fatalf("exit code = %d, want 2\nstdout: %s\nstderr: %s", code, stdout.String(), stderr.String())
+	}
+}

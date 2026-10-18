@@ -217,3 +217,37 @@ func TestAnalyzeMissingGovulncheckIsError(t *testing.T) {
 		t.Errorf("expected a clear 'not found' error, got: %v", err)
 	}
 }
+
+// A tool that emitted a valid header before failing must not become an empty successful scan.
+func TestAnalyzeRejectsToolFailureAfterHeader(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses a POSIX shell stub")
+	}
+	dir := t.TempDir()
+	stub := `#!/bin/sh
+ echo '{"config":{"scan_level":"symbol"}}'
+ echo '{"SBOM":{"roots":["example.com/app"]}}'
+ echo 'load failed' >&2
+ exit 1
+`
+	if err := os.WriteFile(filepath.Join(dir, "govulncheck"), []byte(stub), 0755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir)
+	if _, err := Analyze(context.Background(), dir); err == nil || !strings.Contains(err.Error(), "load failed") {
+		t.Fatalf("expected tool error, got %v", err)
+	}
+}
+
+func TestMissingScanLevelDoesNotConfirmReachability(t *testing.T) {
+	output := []byte(`{"SBOM":{"roots":["example.com/app"]}}
+ {"finding":{"osv":"GO-TEST","trace":[{"module":"dep","package":"dep","function":"Vulnerable"},{"module":"example.com/app","package":"example.com/app","function":"main"}]}}`)
+	root, symbol, summaries, findings, err := parseGovulncheckOutput(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := classify("GO-TEST", summaries["GO-TEST"], findings["GO-TEST"], root, symbol)
+	if got.Reachable || got.Tier != TierMedium {
+		t.Fatalf("unconfirmed scan level produced reachable result: %+v", got)
+	}
+}

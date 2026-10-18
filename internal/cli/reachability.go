@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Xsamsx/SBOMber/internal/reachability"
 	"github.com/Xsamsx/SBOMber/internal/vulnerability"
@@ -22,7 +23,7 @@ type reachabilityReport struct {
 	OverallPercent  int                               `json:"overallPercent"`
 	OverallBand     reachability.RiskBand             `json:"overallBand"`
 	CalledFunctions []reachability.CalledFunctionRisk `json:"calledFunctions"`
-	NotCalled       []reachability.Finding            `json:"notCalled"`
+	Unresolved      []reachability.Finding            `json:"unresolved"`
 }
 
 func runReachability(args []string, stdout io.Writer, stderr io.Writer) int {
@@ -40,6 +41,10 @@ func runReachability(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	root := "."
+	if fs.NArg() > 1 {
+		_, _ = fmt.Fprintln(stderr, "Error: expected at most one module path (place flags before the path)")
+		return 2
+	}
 	if fs.NArg() > 0 {
 		root = fs.Arg(0)
 	}
@@ -55,7 +60,8 @@ func runReachability(args []string, stdout io.Writer, stderr io.Writer) int {
 		return 2
 	}
 
-	ctx := context.Background()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 	if !*outputJSON {
 		_, _ = fmt.Fprintf(stderr, "Building call graph with govulncheck...\n")
 	}
@@ -66,15 +72,15 @@ func runReachability(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 
 	var cves []string
-	var notCalled []reachability.Finding
+	var unresolved []reachability.Finding
 	for _, f := range findings {
 		if f.Reachable {
 			cves = append(cves, f.CVEs...)
 		} else {
-			notCalled = append(notCalled, f)
+			unresolved = append(unresolved, f)
 		}
 	}
-	sort.Slice(notCalled, func(i, j int) bool { return notCalled[i].OSV < notCalled[j].OSV })
+	sort.Slice(unresolved, func(i, j int) bool { return unresolved[i].OSV < unresolved[j].OSV })
 
 	progress := func(done, total int) {
 		if !*outputJSON {
@@ -86,9 +92,13 @@ func runReachability(args []string, stdout io.Writer, stderr io.Writer) int {
 	}
 	intel := make(map[string]reachability.ExploitIntel)
 	for cve, in := range lookupExploitIntel(ctx, cves, progress) {
-		intel[cve] = reachability.ExploitIntel{CVSS: in.CVSS, EPSS: in.EPSS, InKEV: in.InCISAKEV}
+		intel[cve] = reachability.ExploitIntel{CVSS: in.CVSS, EPSS: in.EPSS, InKEV: in.InCISAKEV, EPSSKnown: in.EPSSKnown, KEVKnown: in.KEVKnown}
 	}
 
+	if ctx.Err() != nil {
+		_, _ = fmt.Fprintf(stderr, "Error: reachability analysis deadline exceeded: %v\n", ctx.Err())
+		return 2
+	}
 	called := reachability.ScoreCalledFunctions(findings, intel)
 	percent, band := reachability.OverallRisk(called)
 	report := reachabilityReport{
@@ -96,10 +106,10 @@ func runReachability(args []string, stdout io.Writer, stderr io.Writer) int {
 		OverallPercent:  percent,
 		OverallBand:     band,
 		CalledFunctions: called,
-		NotCalled:       notCalled,
+		Unresolved:      unresolved,
 	}
-	if report.NotCalled == nil {
-		report.NotCalled = []reachability.Finding{}
+	if report.Unresolved == nil {
+		report.Unresolved = []reachability.Finding{}
 	}
 
 	if *outputJSON {
@@ -131,11 +141,14 @@ func bandColor(band reachability.RiskBand) string {
 
 func printReachabilityReport(w io.Writer, r reachabilityReport) {
 	_, _ = fmt.Fprintf(w, "\n%sReachability Risk%s  %s\n", colorBold, colorReset, r.Path)
-	_, _ = fmt.Fprintf(w, "%sScored only against vulnerable functions the call graph shows your code calls.%s\n\n", colorDim, colorReset)
+	_, _ = fmt.Fprintf(w, "%sScores are prioritisation points out of 100, not exploit probabilities. Only findings with a resolved call path are scored; unresolved findings do not establish absence of usage.%s\n\n", colorDim, colorReset)
 
-	_, _ = fmt.Fprintf(w, "  Overall risk: %s%s%d%% %s%s\n", colorBold, bandColor(r.OverallBand), r.OverallPercent, r.OverallBand, colorReset)
-	_, _ = fmt.Fprintf(w, "  %d vulnerable function(s) called, %d vulnerable package(s) present but never called (not scored)\n\n",
-		len(r.CalledFunctions), len(r.NotCalled))
+	if len(r.CalledFunctions) == 0 {
+		_, _ = fmt.Fprintln(w, "  No call paths resolved; overall risk is undetermined.")
+	}
+	_, _ = fmt.Fprintf(w, "  Highest resolved-call priority: %s%s%d%% %s%s\n", colorBold, bandColor(r.OverallBand), r.OverallPercent, r.OverallBand, colorReset)
+	_, _ = fmt.Fprintf(w, "  %d vulnerability finding(s) with a resolved call path, %d finding(s) with no resolved call path (not scored)\n\n",
+		len(r.CalledFunctions), len(r.Unresolved))
 
 	for i, c := range r.CalledFunctions {
 		color := bandColor(c.Band)
@@ -152,11 +165,18 @@ func printReachabilityReport(w io.Writer, r reachabilityReport) {
 		if c.SeverityAssumed {
 			cvssText = "CVSS n/a (assumed 5.0)"
 		}
-		kevText := "not in CISA KEV"
+		kevText := "CISA KEV status unavailable"
+		if c.KEVKnown {
+			kevText = "not listed in CISA KEV"
+		}
 		if c.InKEV {
 			kevText = "IN CISA KEV"
 		}
-		_, _ = fmt.Fprintf(w, "      %s · %s · EPSS %.2f%% · %s\n", cveText, cvssText, c.EPSS*100, kevText)
+		epssText := "EPSS not reported"
+		if c.EPSSKnown {
+			epssText = fmt.Sprintf("EPSS %.2f%%", c.EPSS*100)
+		}
+		_, _ = fmt.Fprintf(w, "      %s · %s · %s · %s\n", cveText, cvssText, epssText, kevText)
 
 		_, _ = fmt.Fprintf(w, "      Call path:\n")
 		for j, frame := range c.CallPath {
@@ -189,12 +209,12 @@ func printReachabilityReport(w io.Writer, r reachabilityReport) {
 		_, _ = fmt.Fprintln(w)
 	}
 
-	if len(r.NotCalled) > 0 {
-		ids := make([]string, 0, len(r.NotCalled))
-		for _, f := range r.NotCalled {
+	if len(r.Unresolved) > 0 {
+		ids := make([]string, 0, len(r.Unresolved))
+		for _, f := range r.Unresolved {
 			ids = append(ids, f.OSV)
 		}
-		_, _ = fmt.Fprintf(w, "  %sPresent but never called (not scored): %s%s\n\n", colorDim, strings.Join(ids, ", "), colorReset)
+		_, _ = fmt.Fprintf(w, "  %sNo resolved call path (not scored): %s%s\n\n", colorDim, strings.Join(ids, ", "), colorReset)
 	}
 
 	_, _ = fmt.Fprintf(w, "  %sScoring chart (max 100%%)%s\n", colorBold, colorReset)
@@ -202,6 +222,6 @@ func printReachabilityReport(w io.Writer, r reachabilityReport) {
 	_, _ = fmt.Fprintf(w, "    Exploit chance   EPSS × %.0f                            up to %.0f\n", reachability.MaxExploitPoints, reachability.MaxExploitPoints)
 	_, _ = fmt.Fprintf(w, "    Known exploited  in CISA KEV                          +%.0f\n", reachability.KnownExploitedPoints)
 	_, _ = fmt.Fprintf(w, "    Call proximity   your code calls it +%.0f, via a dependency +%.0f\n", reachability.DirectCallPoints, reachability.IndirectCallPoints)
-	_, _ = fmt.Fprintf(w, "    %s0-20%% Secure%s · %s21-39%% Low%s · %s40-69%% Medium%s · %s70-100%% High%s\n",
+	_, _ = fmt.Fprintf(w, "    %s0-20%% Minimal priority%s · %s21-39%% Low%s · %s40-69%% Medium%s · %s70-100%% High%s\n",
 		colorGreen, colorReset, colorCyan, colorReset, colorYellow, colorReset, colorRed, colorReset)
 }

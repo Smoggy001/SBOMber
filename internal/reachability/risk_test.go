@@ -7,8 +7,8 @@ func TestBandForBoundaries(t *testing.T) {
 		percent int
 		want    RiskBand
 	}{
-		{0, BandSecure},
-		{20, BandSecure},
+		{0, BandMinimal},
+		{20, BandMinimal},
 		{21, BandLow},
 		{39, BandLow},
 		{40, BandMedium},
@@ -51,7 +51,7 @@ func TestScoreCalledFunctionsUsesChart(t *testing.T) {
 		{"GO-A", 99, BandHigh},
 		{"GO-D", 45, BandMedium},
 		{"GO-B", 38, BandLow},
-		{"GO-C", 16, BandSecure},
+		{"GO-C", 16, BandMinimal},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d results, want %d: %+v", len(got), len(want), got)
@@ -67,7 +67,7 @@ func TestScoreCalledFunctionsUsesChart(t *testing.T) {
 	}
 }
 
-// Vulnerable code that is present but never called must not be scored.
+// Vulnerable code that is with no resolved call path must not be scored.
 func TestScoreCalledFunctionsSkipsUncalled(t *testing.T) {
 	findings := []Finding{
 		{OSV: "GO-LOW", Tier: TierLow, Reachable: false, CVEs: []string{"CVE-X"}},
@@ -79,8 +79,8 @@ func TestScoreCalledFunctionsSkipsUncalled(t *testing.T) {
 	if len(got) != 0 {
 		t.Fatalf("expected no scored results, got %+v", got)
 	}
-	if percent, band := OverallRisk(got); percent != 0 || band != BandSecure {
-		t.Errorf("OverallRisk of nothing called = %d%% %s, want 0%% SECURE", percent, band)
+	if percent, band := OverallRisk(got); percent != 0 || band != BandUndetermined {
+		t.Errorf("OverallRisk of nothing called = %d%% %s, want 0 points UNDETERMINED", percent, band)
 	}
 }
 

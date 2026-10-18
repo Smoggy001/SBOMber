@@ -169,7 +169,7 @@ Uses govulncheck's call graph to find the vulnerable functions your code
 actually calls, and scores only those, 0-100%: severity (CVSS from NVD, up
 to 40) + exploit chance (EPSS, up to 25) + known exploited (CISA KEV, +20) +
 call proximity (your code calls it +15, via a dependency +8).
-0-20% Secure, 21-39% Low, 40-69% Medium, 70-100% High.
+0-20% Minimal priority, 21-39% Low, 40-69% Medium, 70-100% High.
 
 ```bash
 go install golang.org/x/vuln/cmd/govulncheck@latest   # one-time
@@ -268,7 +268,7 @@ Reports are saved to `~/.sbomber/reports/`:
 
 Interactive report with:
 - Risk score (0-100%) for every vulnerability, with its breakdown: CVSS ÷ 10 × 40 + EPSS × 25 + CISA KEV 20 + direct dependency 15 / transitive 8.
-  0-20% Secure, 21-39% Low, 40-69% Medium, 70-100% High; overall project risk, per-band counts and a risk filter
+  0-20% Minimal priority, 21-39% Low, 40-69% Medium, 70-100% High; overall project risk, per-band counts and a risk filter
 - Severity breakdown (Critical/High/Medium/Low)
 - Direct vs transitive dependency filtering
 - Test data detection (auto-flags fixtures/examples)

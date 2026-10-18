@@ -85,7 +85,7 @@ one included) classify as HIGH instead of CRITICAL;
 
 `sbomber reachability` scores each vulnerable function the call graph
 shows is **called** (CRITICAL or HIGH above) from 0 to 100%. Vulnerable
-code that is present but never called (LOW, MEDIUM) is listed but not
+code that is with no resolved call path (LOW, MEDIUM) is listed but not
 scored. The parts add up to exactly 100:
 
 | Part | Formula | Max | Source |
@@ -95,7 +95,7 @@ scored. The parts add up to exactly 100:
 | Known exploited | listed in CISA KEV | 20 | CISA KEV catalog |
 | Call proximity | app code calls it directly (CRITICAL) = 15, via a dependency (HIGH) = 8 | 15 | the call graph |
 
-Bands: **0–20% Secure**, **21–39% Low**, **40–69% Medium**, **70–100% High**.
+Bands: **0–20% Minimal priority**, **21–39% Low**, **40–69% Medium**, **70–100% High**.
 The project's overall risk is its riskiest called function.
 
 - govulncheck reports Go IDs (`GO-YYYY-NNNN`); the OSV entry's `CVE-`

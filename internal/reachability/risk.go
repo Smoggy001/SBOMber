@@ -9,8 +9,9 @@ import (
 type RiskBand string
 
 const (
-	// BandSecure: 0–20%.
-	BandSecure RiskBand = "SECURE"
+	BandUndetermined RiskBand = "UNDETERMINED"
+	// BandMinimal: 0–20%.
+	BandMinimal RiskBand = "MINIMAL PRIORITY"
 	// BandLow: 21–39%.
 	BandLow RiskBand = "LOW RISK"
 	// BandMedium: 40–69%.
@@ -30,7 +31,7 @@ const (
 //	                 called via a dependency    = 8
 //
 // Only functions the call graph shows are actually called are scored;
-// vulnerable code that is present but never called is left out.
+// vulnerable code that is with no resolved call path is left out.
 const (
 	MaxSeverityPoints    = 40.0
 	MaxExploitPoints     = 25.0
@@ -53,15 +54,17 @@ func BandFor(percent int) RiskBand {
 	case percent > 20:
 		return BandLow
 	default:
-		return BandSecure
+		return BandMinimal
 	}
 }
 
 // ExploitIntel is the severity and exploit data for one CVE.
 type ExploitIntel struct {
-	CVSS  float64
-	EPSS  float64
-	InKEV bool
+	EPSSKnown bool
+	KEVKnown  bool
+	CVSS      float64
+	EPSS      float64
+	InKEV     bool
 }
 
 // RiskBreakdown is the points each part of the scoring chart contributed.
@@ -75,6 +78,8 @@ type RiskBreakdown struct {
 // CalledFunctionRisk is the risk score for one vulnerable function that the
 // application actually calls.
 type CalledFunctionRisk struct {
+	EPSSKnown bool `json:"epssKnown"`
+	KEVKnown  bool `json:"kevKnown"`
 	Finding
 	Percent   int           `json:"percent"`
 	Band      RiskBand      `json:"band"`
@@ -104,6 +109,8 @@ func ScoreCalledFunctions(findings []Finding, intel map[string]ExploitIntel) []C
 			if !ok {
 				continue
 			}
+			r.EPSSKnown = r.EPSSKnown || in.EPSSKnown
+			r.KEVKnown = r.KEVKnown || in.KEVKnown
 			r.CVSS = math.Max(r.CVSS, in.CVSS)
 			r.EPSS = math.Max(r.EPSS, in.EPSS)
 			r.InKEV = r.InKEV || in.InKEV
@@ -141,8 +148,11 @@ func ScoreCalledFunctions(findings []Finding, intel map[string]ExploitIntel) []C
 }
 
 // OverallRisk is the project's risk: the score of its riskiest called
-// vulnerable function, or 0% (secure) when none are called.
+// vulnerable function, or 0 points when no call path is resolved when none are called.
 func OverallRisk(results []CalledFunctionRisk) (int, RiskBand) {
+	if len(results) == 0 {
+		return 0, BandUndetermined
+	}
 	top := 0
 	for _, r := range results {
 		if r.Percent > top {
