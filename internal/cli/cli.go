@@ -142,6 +142,11 @@ func Main(args []string, stdin io.Reader, stdout io.Writer, stderr io.Writer) in
 		return runUsage(args[1:], stdout, stderr)
 	case "decide":
 		return runDecide(args[1:], stdout, stderr)
+	case "audit":
+		return runAudit(args[1:], stdout, stderr)
+
+	case "report":
+		return runReport(args[1:], stdout, stderr)
 	case "vex":
 		return runVEX(args[1:], stdout, stderr)
 	case "demo":
@@ -1844,6 +1849,9 @@ Usage:
   sbomber localise --canonical-scan <canonical-scan.json> [--out localisation.json] [--trace trace.json]
   sbomber usage --canonical-scan <canonical-scan.json> [--out usage-graph.json] [--entry file:function]
   sbomber decide --canonical-scan <file> --usage-graph <file> --localisation <file> [--out decision-results.json]
+  sbomber audit [--cases testdata/audit] [--out audit-results.json]
+
+  sbomber report --decision-results <file> [--usage-graph <file>] [--format html|text] [--out <file>|-] [filters]
   sbomber vex --decisions <decision-results.json> [--canonical-scan <file>] [--subject application|package] [--product <id>] [--out vex.openvex.json]
   sbomber version
 
@@ -1909,11 +1917,29 @@ VEX Flags (Component 3: OpenVEX 0.2.0 from decision-results.json):
   no_usage_detected and unknown -> under_investigation, unsupported -> omitted. not_affected is rejected by the committed exporter.
 
 Reachability (Go only, needs govulncheck):
-  Scores only the vulnerable functions your code actually calls, 0-100%,
+  Scores findings with resolved static call paths, 0-100 prioritisation points,
   from CVSS (NVD), EPSS, CISA KEV and how directly the call is made.
-  0-20% Secure, 21-39% Low, 40-69% Medium, 70-100% High.
+  0-20 points Minimal priority, 21-39% Low, 40-69% Medium, 70-100% High.
   --json                                Output results as JSON
   --db <url>                            Vulnerability database (default: https://vuln.go.dev)
+
+Audit Flags (S5-14: replay hand-labelled cases through the decision pipeline):
+  --cases <dir>                         one subdirectory per labelled case (default: testdata/audit)
+  --out <file>                          also write audit-results.json
+
+Report Flags (Component 4: which package to update first, why, and what it fixes):
+  --decision-results <file>             decision-results.json from sbomber decide (required)
+  --usage-graph <file>                  usage-graph.json the decisions rest on; shows analysis coverage
+  --format html|text                    output format (default: html)
+  --out <file>|-                        file to write, - for stdout (default: remediation-report.html
+                                        for html, stdout for text)
+  --section <ids>                       only these sections: update-first, insufficient-information,
+                                        no-direct-usage, lower-priority (comma-separated)
+  --band <bands>                        only these bands: act_now, lower_priority, insufficient_information
+  --state <states>                      only these states: usage_detected, no_usage_detected, unknown,
+                                        unsupported
+  --package <text>                      only packages whose purl contains this (comma-separated)
+                                        Filters change the view only; the report says how many findings they hid.
 
 Examples:
   sbomber
